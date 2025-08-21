@@ -1,8 +1,8 @@
-#%% 
+#%%
 import jax.numpy as jnp
 from jax.scipy.stats import norm
 from jax import jit, value_and_grad
-from jaxopt import LBFGS, ProjectedGradient, ScipyBoundedMinimize
+from jaxopt import ScipyBoundedMinimize
 import matplotlib.pyplot as plt
 
 #%% Parameters
@@ -54,7 +54,6 @@ def simpson_rule(y):
     s_even = jnp.sum(y[2:-2:2])   # indices 2,4,6,...
     return (y_grid_step_size / 3.0) * (y[0] + y[-1] + 4.0 * s_odd + 2.0 * s_even)
 
-
 # Pre store vectors used over and over at intended action
 cost_of_effort_0 = cost_of_effort(intended_action)
 marginal_cost_of_effort_0 = marginal_cost_of_effort(intended_action)
@@ -80,7 +79,6 @@ def expected_wage(contract_vec):
 def d_U_d_a(contract_vec):
     z = contract_vec * d_density_d_a_0
     return  simpson_rule(z) - marginal_cost_of_effort_0
-
 
 #%% Core functions (whole math is this thing see paper)
 # Canonical contract from the paper
@@ -110,7 +108,6 @@ def lagrange_dual(lam, mu, mu_hats, a_hats):
     v_star = canonical_contract_vec(lam, mu, mu_hats, a_hats)
     return lagrangian(v_star, lam, mu, mu_hats, a_hats)
 
-
 #%% Objective function
 # Helpers to pack/unpack a single flat parameter vector for the optimizer.
 # Layout: [ lam, mu, mu_hats (n_total), a_hat_floating (n_floating) ]
@@ -133,7 +130,6 @@ def objective(theta):
     lam, mu, mu_hats, a_hats = unpack_params(theta)
     return -lagrange_dual(lam, mu, mu_hats, a_hats)
 
-
 objective_jit = jit(objective)
 objective_with_gradient = value_and_grad(objective)
 objective_with_gradient_jit = jit(objective_with_gradient)
@@ -148,13 +144,12 @@ a_hat_floating0 = jnp.full((n_floating_a_hat,), 0.0)
 init = pack_initial_params(lam0, mu0, mu_hats0, a_hat_floating0)
 
 # --- bounds ---
-# lam: free; mu: >= 0; mu_hats: free; floating a_hats: optional box [0, 120]
-# (adjust box as needed)
+# lam >= 0; mu free; mu_hats >= 0; floating a_hats in [0, 120]
 a_min, a_max = 0.0, 120.0
 
 lower_bounds = jnp.concatenate([
     jnp.array([0.0, -jnp.inf]),                   # lam, mu
-    jnp.full((n_total_a_hat,), 0.0),         # mu_hats
+    jnp.full((n_total_a_hat,), 0.0),              # mu_hats
     jnp.full((n_floating_a_hat,), a_min)          # floating a_hats
 ])
 upper_bounds = jnp.concatenate([
@@ -164,133 +159,29 @@ upper_bounds = jnp.concatenate([
 ])
 bounds = (lower_bounds, upper_bounds)
 
+#%% Solver (ScipyBoundedMinimize only)
+solver = ScipyBoundedMinimize(
+    fun=objective_with_gradient_jit,
+    method="l-bfgs-b",
+    value_and_grad=True,
+    maxiter=1000,
+    tol=1e-6,
+)
 
-#%% Solvers & timing (refactor: constrained only)
-
-from time import perf_counter
-
-# --- projection that matches your bounds exactly ---
-# Layout of params: [ lam, mu, mu_hats (n_total_a_hat), a_hat_floating (n_floating_a_hat) ]
-def _project_to_box(params, hyperparams=None):
-    # lam >= 0
-    lam = jnp.maximum(params[0], 0.0)
-    # mu: free
-    mu = params[1]
-
-    # mu_hats >= 0
-    start_mu = 2
-    end_mu   = 2 + n_total_a_hat
-    mu_hats = jnp.maximum(params[start_mu:end_mu], 0.0)
-
-    # a_hat_floating in [a_min, a_max]
-    start_a = end_mu
-    end_a   = end_mu + n_floating_a_hat
-    a_hat_float = jnp.clip(params[start_a:end_a], a_min, a_max)
-
-    return jnp.concatenate([jnp.array([lam, mu]), mu_hats, a_hat_float])
-
-# --- factory functions: fresh solver instances each call ---
-def make_pg():
-    return ProjectedGradient(
-        fun=objective_with_gradient_jit,
-        value_and_grad=True,
-        projection=_project_to_box,
-        maxiter=2000,        # PG typically needs more iterations
-        tol=1e-6,
-        stepsize=1e-1,       # tune as needed
-    )
-
-def make_scipy_bounded():
-    return ScipyBoundedMinimize(
-        fun=objective_with_gradient_jit,
-        method="l-bfgs-b",
-        value_and_grad=True,
-        maxiter=1000,
-        tol=1e-6,
-    )
-
-# --- timing helper ---
-def _run_and_time(name, build_solver, *, warmup=True, **run_kwargs):
-    """
-    build_solver: () -> solver instance
-    run_kwargs: passed to solver.run(...)
-    Returns dict with method, params, state, time_sec.
-    """
-    solver = build_solver()
-
-    # Optional warmup to exclude JIT compile time
-    if warmup:
-        _params_w, _state_w = solver.run(**run_kwargs)
-        try:
-            _ = _params_w.block_until_ready()
-        except Exception:
-            pass
-
-    t0 = perf_counter()
-    params, state = solver.run(**run_kwargs)
-    try:
-        _ = params.block_until_ready()
-    except Exception:
-        pass
-    t1 = perf_counter()
-
-    return {"method": name, "params": params, "state": state, "time_sec": t1 - t0}
-
-# --- run solvers (constrained only) ---
-results = []
-results.append(_run_and_time("ProjectedGradient (boxed)", make_pg, warmup=True, init_params=init))
-results.append(_run_and_time("ScipyBoundedMinimize (boxed)", make_scipy_bounded,
-                             warmup=True, init_params=init, bounds=bounds))
-
-# --- unpack helper for summaries ---
-def _unpack_short(theta):
-    lam = float(theta[0])
-    mu  = float(theta[1])
-    mu_vec = theta[2:2 + n_total_a_hat]
-    a_flt  = theta[2 + n_total_a_hat : 2 + n_total_a_hat + n_floating_a_hat]
-    return lam, mu, mu_vec, a_flt
-
-# --- pretty print summary table ---
-print("\nComparison of optimal parameters and runtimes (constrained methods):")
-hdr = "{:<32} {:>12} {:>12} {:>10} {:>10} {:>10} {:>10} {:>12}"
-row = "{:<32} {:>12.4f} {:>12.4f} {:>10.2e} {:>10.4f} {:>10.2f} {:>10.2f} {:>12.6f}"
-print(hdr.format("Method", "lambda", "mu",
-                 "||mû||₂", "μ̂_min", "â_min", "â_max", "time (s)"))
-print("-" * 120)
-
-for r in results:
-    lam, mu, mu_vec, a_flt = _unpack_short(r["params"])
-    mu_norm = float(jnp.linalg.norm(mu_vec))
-    mu_min  = float(mu_vec.min()) if mu_vec.size else float('nan')
-    a_min_v = float(a_flt.min()) if a_flt.size else float('nan')
-    a_max_v = float(a_flt.max()) if a_flt.size else float('nan')
-    t       = r["time_sec"]
-    print(row.format(r["method"], lam, mu, mu_norm, mu_min, a_min_v, a_max_v, t))
-
-# --- pick a constrained solution for downstream use (recommended) ---
-_constrained = next(r for r in results if r["method"].startswith("ScipyBoundedMinimize"))
-theta_star = _constrained["params"]
+params_opt, state = solver.run(init_params=init, bounds=bounds)
+theta_star = params_opt
 lam_star, mu_star, mu_hats_star, a_hats_star = unpack_params(theta_star)
 
-#%% Plot U(a) at optimal contract
-optimal_contract_pg = canonical_contract_vec(
-    results[0]["params"][0], results[0]["params"][1],
-    results[0]["params"][2:2 + n_total_a_hat],
-    jnp.concatenate([a_hat_fixed, results[0]["params"][2 + n_total_a_hat : 2 + n_total_a_hat + n_floating_a_hat]])
-)
-optimal_contract_scipy = canonical_contract_vec(
-    results[1]["params"][0], results[1]["params"][1],
-    results[1]["params"][2:2 + n_total_a_hat],
-    jnp.concatenate([a_hat_fixed, results[1]["params"][2 + n_total_a_hat : 2 + n_total_a_hat + n_floating_a_hat]])
+#%% Plot U(a) at optimal contract (Scipy-only)
+optimal_contract = canonical_contract_vec(
+    lam_star, mu_star, mu_hats_star, a_hats_star
 )
 
 a_grid = jnp.linspace(0, 120, 100)
-U_grid_pg = jnp.array([U(optimal_contract_pg, a) for a in a_grid])
-U_grid_scipy = jnp.array([U(optimal_contract_scipy, a) for a in a_grid])
+U_grid = jnp.array([U(optimal_contract, a) for a in a_grid])
 
 plt.figure()
-plt.plot(a_grid, U_grid_pg, label="ProjectedGradient (boxed)")
-plt.plot(a_grid, U_grid_scipy, label="ScipyBoundedMinimize (boxed)")
+plt.plot(a_grid, U_grid, label="ScipyBoundedMinimize")
 plt.title("Expected Utility as a Function of Effort")
 plt.xlabel("Effort level (a)")
 plt.ylabel("Utility")
@@ -298,18 +189,27 @@ plt.grid(True)
 plt.legend()
 plt.show()
 
-# Plot optimal wage function for both optimal contracts
-wage_grid_pg = k(optimal_contract_pg)
-wage_grid_scipy = k(optimal_contract_scipy)
+# Plot optimal wage function
+wage_grid = k(optimal_contract)
 
 plt.figure()
-plt.plot(y_grid, wage_grid_pg, label="ProjectedGradient Wage")
-plt.plot(y_grid, wage_grid_scipy, label="ScipyBoundedMinimize Wage")
-plt.title("Optimal Wage as a Function of Effort")
-plt.xlabel("Effort level (a)")
+plt.plot(y_grid, wage_grid, label="Optimal Wage")
+plt.title("Optimal Wage as a Function of Outcome y")
+plt.xlabel("Outcome (y)")
 plt.ylabel("Wage")
 plt.grid(True)
 plt.legend()
 plt.show()
+
+#%% Print optimal parameters and expected wage
+
+print("\nOptimal parameters:")
+print(f"lambda*: {lam_star:.4f}")
+print(f"mu*: {mu_star:.4f}")
+print(f"mu_hats*: {mu_hats_star}")
+print(f"a_hats*: {a_hats_star}")
+
+exp_wage_opt = expected_wage(optimal_contract)
+print(f"\nAttained expected wage: {float(exp_wage_opt):.6f}")
 
 # %%
