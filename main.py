@@ -49,14 +49,14 @@ w = w * (y_grid_step_size / 3.0)
 # =================================
 # Fixed a-hats (count only)
 # =================================
-n_a_hat = 1
+n_a_hat = 2
 
 # ======================================
 # Cache builder for (a0, U0, fixed hats)
 # ======================================
 def build_cache(a0: float,
                 reservation_utility: float,
-                a_hat_fixed_vals: jnp.ndarray):
+                a_hat_vals: jnp.ndarray):
     """
     Build a small PyTree 'cache' of arrays that depend on the intended action a0,
     the reservation utility, and the values of the fixed a-hats.
@@ -65,9 +65,9 @@ def build_cache(a0: float,
     """
     
     a0 = jnp.asarray(a0, dtype=y_grid.dtype)
-    a_hat_fixed_vals = jnp.asarray(a_hat_fixed_vals, dtype=y_grid.dtype)
-    assert a_hat_fixed_vals.shape == (n_a_hat,), \
-        f"Expected fixed hats of shape {(n_a_hat,)}, got {a_hat_fixed_vals.shape}"
+    a_hat_vals = jnp.asarray(a_hat_vals, dtype=y_grid.dtype)
+    assert a_hat_vals.shape == (n_a_hat,), \
+        f"Expected fixed hats of shape {(n_a_hat,)}, got {a_hat_vals.shape}"
 
     # Precompute at a0
     density_0 = density(y_grid, a0)                  # (y_n,)
@@ -82,12 +82,12 @@ def build_cache(a0: float,
     w_d_density_da0 = w * d_density_d_a_0
 
     # Precompute density columns for the FIXED a-hats (used in canonical contract)
-    dens_y_fixed = density(y_grid[:, None], a_hat_fixed_vals[None, :])  # (y_n, n_a_hat)
+    dens_y_fixed = density(y_grid[:, None], a_hat_vals[None, :])  # (y_n, n_a_hat)
 
     return {
         "a0": a0,
         "reservation_utility": jnp.asarray(reservation_utility, dtype=y_grid.dtype),
-        "a_hat_fixed": a_hat_fixed_vals,           # (n_a_hat,)
+        "a_hat": a_hat_vals,           # (n_a_hat,)
         "dens_y_fixed": dens_y_fixed,              # (y_n, n_a_hat)
 
         "density_0": density_0,                    # (y_n,)
@@ -144,7 +144,7 @@ def c_ir(v, cache):
 def c_ic(v, cache):
     # IC at sampled fixed points: U(a_hat_i) - U0 <= 0  (elementwise)
     U0 = U_0(v, cache)
-    a_hats = cache["a_hat_fixed"]  # (n_a_hat,)
+    a_hats = cache["a_hat"]  # (n_a_hat,)
     U_vec = U(v, a_hats)           # (n_a_hat,)
     return U_vec - U0              # (n_a_hat,) <= 0
 
@@ -238,7 +238,7 @@ noisy_intended_actions = BASE_INTENDED_ACTION + rng.normal(loc=0.0, scale=NOISE_
 
 # You can vary these two per run (values only; counts stay fixed):
 reservation_wages = jnp.linspace(0.0, 80.0, N_RUNS)  # example
-a_hat_experiments = jnp.linspace(0.0, 140.0, n_a_hat)  # shape (2, ), same values for all runs
+a_hat_experiments = jnp.zeros(n_a_hat)  # shape (n_a_hat, ), same values for all runs
 
 # ===========================
 # Warm-up compile (once)
@@ -268,7 +268,7 @@ for i, (a0, rw) in enumerate(zip(noisy_intended_actions,
     cache = build_cache(
         float(a0),
         reservation_utility=float(u(rw)),         # vary reservation utility here
-        a_hat_fixed_vals=a_hat_experiments, # vary fixed hats VALUES here (same count)
+        a_hat_vals=a_hat_experiments, # vary fixed hats VALUES here (same count)
     )
 
     t0 = time.time()
@@ -298,7 +298,7 @@ LINESEARCH_GRID_N = 121  # simple, robust grid (objective may be discontinuous)
 a_grid = np.linspace(0.0, 130.0, LINESEARCH_GRID_N)
 
 # Use the last run's reservation utility and fixed hats for the search
-res_util = float(u(50.0) - 10)  # example reservation utility
+res_util = float(u(50.0)-10)  # example reservation utility
 
 best = {"a": None, "gap": -np.inf, "ew": None, "theta": None, "cache": None}
 theta_init = theta_star  # warm start from last solve
@@ -364,7 +364,7 @@ print(f"mu_hats_b: {num_zero} out of {num_total} are zero.")
 
 if num_zero < num_total:
     nonzero_indices = np.where(~zero_mask)[0]
-    y_grid_vals = np.array(cache_linesearch["a_hat_fixed"])[nonzero_indices]
+    y_grid_vals = np.array(cache_linesearch["a_hat"])[nonzero_indices]
     print("Nonzero mu_hats_b at y_grid entries:")
     for idx, val, mu_val in zip(nonzero_indices, y_grid_vals, np.array(mu_hats_b)[nonzero_indices]):
         print(f"  index {idx}: a_hat = {val:.4f}, mu_hat = {mu_val:.6f}")
@@ -396,5 +396,64 @@ plt.plot(np.asarray(y_grid), np.asarray(wage_schedule), linewidth=1.5)
 plt.xlabel("Outcome y")
 plt.ylabel("Wage k(v(y))")
 plt.title("Wage schedule under optimal contract")
+plt.tight_layout()
+plt.show()
+
+
+
+#%%
+# ===========================
+# Interactive experiment:
+# Pick a_hat from the argmax of U(a) on the plotted grid
+# ===========================
+# Use the same grid used in the "U(a)" plot: a_eval_grid
+a_eval_grid_jnp = jnp.asarray(a_eval_grid)
+U_vec = U(v_star_best, a_eval_grid_jnp)           # vectorized evaluation
+idx = int(jnp.argmax(U_vec))
+a_hat_from_U = float(a_eval_grid_jnp[idx])
+
+# Update the fixed hats to [0, a_hat_from_U]
+a_hat_experiments_new = jnp.array([0.0, a_hat_from_U])
+print(f"Chosen a_hat from U-argmax: {a_hat_from_U:.4f}")
+print(f"New a_hat_experiments = {a_hat_experiments_new}")
+
+# ===========================
+# Re-solve at the same intended action using the new hats
+# ===========================
+cache_new = build_cache(float(a_star_linesearch), res_util, a_hat_experiments_new)
+theta_opt_new, state = solver.run(theta_star_linesearch, bounds, cache_new)
+lam_n, mu_n, mu_hats_n = unpack_params(theta_opt_new)
+v_star_new = canonical_contract_vec(lam_n, mu_n, mu_hats_n, cache_new)
+
+# Print multipliers
+print(f"\n[New solution] lam = {lam_n:.6f}, mu = {mu_n:.6f}")
+print("mu_hats_n:", mu_hats_n)
+
+# Also print which mu_hats are nonzero
+zero_mask_new = np.isclose(np.array(mu_hats_n), 0.0)
+num_zero_new = np.sum(zero_mask_new)
+num_total_new = len(mu_hats_n)
+print(f"{num_zero_new} out of {num_total_new} mu_hats are zero.")
+
+if num_zero_new < num_total_new:
+    nonzero_indices_new = np.where(~zero_mask_new)[0]
+    a_hat_vals_new = np.array(cache_new["a_hat"])[nonzero_indices_new]
+    print("Nonzero mu_hats at a_hat entries:")
+    for idx, val, mu_val in zip(nonzero_indices_new, a_hat_vals_new, np.array(mu_hats_n)[nonzero_indices_new]):
+        print(f"  index {idx}: a_hat = {val:.4f}, mu_hat = {mu_val:.6f}")
+
+# ===========================
+# Compare old vs new U(a)
+# ===========================
+U_values_new = [float(U(v_star_new, a)) for a in a_eval_grid]
+
+plt.figure(figsize=(6,4))
+plt.plot(a_eval_grid, U_values, linewidth=1.5, label="U(a) with old hats")
+plt.plot(a_eval_grid, U_values_new, linewidth=1.5, linestyle="--", label="U(a) with new hats")
+plt.axvline(a_hat_from_U, linestyle=":", label=f"a_hat* = {a_hat_from_U:.2f}")
+plt.xlabel("Action a")
+plt.ylabel("U(a)")
+plt.title("Utility U(a): old vs. new a_hat (picked at U-argmax)")
+plt.legend()
 plt.tight_layout()
 plt.show()
