@@ -46,15 +46,10 @@ w = w.at[1:-1:2].set(4.0)
 w = w.at[2:-2:2].set(2.0)
 w = w * (y_grid_step_size / 3.0)
 
-def simpson_rule(y):
-    return jnp.vdot(w, y)
-
 # =================================
-# Fixed/floating a-hats (counts)
+# Fixed a-hats (count only)
 # =================================
-n_fixed_a_hat = 2
-n_floating_a_hat = 1
-n_total_a_hat = n_fixed_a_hat + n_floating_a_hat
+n_a_hat = 1
 
 # ======================================
 # Cache builder for (a0, U0, fixed hats)
@@ -64,14 +59,15 @@ def build_cache(a0: float,
                 a_hat_fixed_vals: jnp.ndarray):
     """
     Build a small PyTree 'cache' of arrays that depend on the intended action a0,
-    the reservation utility, and the values (NOT the count) of the fixed a-hats.
+    the reservation utility, and the values of the fixed a-hats.
 
     Shapes/dtypes stay constant across runs, so JIT can be reused.
     """
+    
     a0 = jnp.asarray(a0, dtype=y_grid.dtype)
     a_hat_fixed_vals = jnp.asarray(a_hat_fixed_vals, dtype=y_grid.dtype)
-    assert a_hat_fixed_vals.shape == (n_fixed_a_hat,), \
-        f"Expected fixed hats of shape {(n_fixed_a_hat,)}, got {a_hat_fixed_vals.shape}"
+    assert a_hat_fixed_vals.shape == (n_a_hat,), \
+        f"Expected fixed hats of shape {(n_a_hat,)}, got {a_hat_fixed_vals.shape}"
 
     # Precompute at a0
     density_0 = density(y_grid, a0)                  # (y_n,)
@@ -86,13 +82,13 @@ def build_cache(a0: float,
     w_d_density_da0 = w * d_density_d_a_0
 
     # Precompute density columns for the FIXED a-hats (used in canonical contract)
-    dens_y_fixed = density(y_grid[:, None], a_hat_fixed_vals[None, :])  # (y_n, n_fixed_a_hat)
+    dens_y_fixed = density(y_grid[:, None], a_hat_fixed_vals[None, :])  # (y_n, n_a_hat)
 
     return {
         "a0": a0,
         "reservation_utility": jnp.asarray(reservation_utility, dtype=y_grid.dtype),
-        "a_hat_fixed": a_hat_fixed_vals,           # (n_fixed_a_hat,)
-        "dens_y_fixed": dens_y_fixed,              # (y_n, n_fixed_a_hat)
+        "a_hat_fixed": a_hat_fixed_vals,           # (n_a_hat,)
+        "dens_y_fixed": dens_y_fixed,              # (y_n, n_a_hat)
 
         "density_0": density_0,                    # (y_n,)
         "d_density_d_a_0": d_density_d_a_0,        # (y_n,)
@@ -107,8 +103,13 @@ def build_cache(a0: float,
 # Core functions parameterized by `cache`
 # =========================================
 def U(contract_vec, a):
-    # independent of cache, uses full density(y, a)
-    return jnp.vdot(w, contract_vec * density(y_grid, a)) - cost_of_effort(a)
+    # a: JAX array, shape () for scalar or (n,) for vector
+    # contract_vec: shape (y_n,)
+    # Returns: shape () if a is scalar, shape (n,) if a is vector
+    a = jnp.atleast_1d(a)  # ensures shape (1,) for scalar, (n,) for vector
+    dens = density(y_grid[:, None], a[None, :])  # shape (y_n, n_a)
+    util = jnp.sum(w[:, None] * contract_vec[:, None] * dens, axis=0) - cost_of_effort(a)
+    return util.squeeze()  # returns scalar if input was scalar, array if input was array
 
 def U_0(contract_vec, cache):
     return jnp.vdot(cache["w_density0"], contract_vec) - cache["cost_of_effort_0"]
@@ -122,25 +123,14 @@ def d_U_d_a(contract_vec, cache):
 # =========================================
 # Canonical inner minimizer v*(λ, μ, μ_hat)
 # =========================================
-def canonical_contract_vec(lam, mu, mu_hats, a_hats, cache, eps=1e-12):
+def canonical_contract_vec(lam, mu, mu_hats, cache, eps=1e-12):
     """
-    Build v*(y) from multipliers. We reuse cached density columns for the fixed hats
-    and compute density columns for the floating hats on the fly.
+    Build v*(y) from multipliers using ONLY fixed a-hats.
     """
-    # Split a_hats into fixed/floating (counts are constant)
-    a_hats_fixed = cache["a_hat_fixed"]  # (n_fixed_a_hat,)
-    a_hats_floating = a_hats[n_fixed_a_hat:]  # (n_floating_a_hat,)
-
-    # Densities: fixed part from cache; floating recomputed
-    dens_y_fixed = cache["dens_y_fixed"]  # (y_n, n_fixed_a_hat)
-    if n_floating_a_hat > 0:
-        dens_y_float = density(y_grid[:, None], a_hats_floating[None, :])  # (y_n, n_floating_a_hat)
-        dens_y_a = jnp.concatenate([dens_y_fixed, dens_y_float], axis=1)   # (y_n, n_total_a_hat)
-    else:
-        dens_y_a = dens_y_fixed
-
-    ratio = dens_y_a / jnp.maximum(cache["density_0"][:, None], eps)  # (y_n, n_total_a_hat)
-    hat_term = (1.0 - ratio) @ mu_hats                                # (y_n,)
+    # Densities for fixed hats come from cache
+    dens_y_fixed = cache["dens_y_fixed"]                        # (y_n, n_a_hat)
+    ratio = dens_y_fixed / jnp.maximum(cache["density_0"][:, None], eps)  # (y_n, n_a_hat)
+    hat_term = (1.0 - ratio) @ mu_hats                          # (y_n,)
     z = lam + mu * cache["score_0"] + hat_term
     return link_function_g(z)
 
@@ -151,11 +141,12 @@ def c_ir(v, cache):
     # IR: U0 >= Ubar  <=>  Ubar - U0 <= 0
     return cache["reservation_utility"] - U_0(v, cache)          # scalar <= 0
 
-def c_ic(v, a_hats, cache):
-    # IC at sampled points: U(a) - U0 <= 0  (elementwise)
+def c_ic(v, cache):
+    # IC at sampled fixed points: U(a_hat_i) - U0 <= 0  (elementwise)
     U0 = U_0(v, cache)
-    U_vec = vmap(lambda a: U(v, a))(a_hats)                       # (n_total,)
-    return U_vec - U0                                             # (n_total,) <= 0
+    a_hats = cache["a_hat_fixed"]  # (n_a_hat,)
+    U_vec = U(v, a_hats)           # (n_a_hat,)
+    return U_vec - U0              # (n_a_hat,) <= 0
 
 def h_foc(v, cache):
     # equality at a0: dU/da(a0) = 0
@@ -164,37 +155,33 @@ def h_foc(v, cache):
 # =========================================
 # Pack / unpack θ and analytic (value, grad)
 # =========================================
-# Layout: [ lam, mu, mu_hats (n_total), a_hat_floating (n_floating) ]
-def unpack_params(theta_vec, cache):
+# Layout: [ lam, mu, mu_hats (n_fixed) ]
+def unpack_params(theta_vec):
     lam = theta_vec[0]
     mu  = theta_vec[1]
-    mu_hats = theta_vec[2 : 2 + n_total_a_hat]
-    a_hat_floating = theta_vec[2 + n_total_a_hat : 2 + n_total_a_hat + n_floating_a_hat]
-    a_hats = jnp.concatenate([cache["a_hat_fixed"], a_hat_floating])
-    return lam, mu, mu_hats, a_hats
+    mu_hats = theta_vec[2 : 2 + n_a_hat]
+    return lam, mu, mu_hats
 
-def pack_initial_params(lam0, mu0, mu_hats0, a_hat_floating0):
+def pack_initial_params(lam0, mu0, mu_hats0):
     return jnp.concatenate([
         jnp.array([lam0, mu0]),
-        mu_hats0,
-        a_hat_floating0
+        mu_hats0
     ])
 
 def dual_value_and_grad(theta_vec, cache):
     """
-    g(θ) = L(v*(θ), θ)
+    g(θ) = L(v*(θ), θ) lagrange dual function.
     We MINIMIZE obj = -g, so return (obj, grad_obj).
     Danskin => ∂g/∂multiplier = constraint residual at v*(θ).
     """
-    lam, mu, mu_hats, a_hats = unpack_params(theta_vec, cache)
+    lam, mu, mu_hats = unpack_params(theta_vec)
 
     # inner argmin v*(θ) constructed analytically; do NOT backprop through it
-    v_star = canonical_contract_vec(lam, mu, mu_hats, a_hats, cache)
-    v_star = lax.stop_gradient(v_star)
+    v_star = canonical_contract_vec(lam, mu, mu_hats, cache)
 
     # constraint residuals at v*
     cir  = c_ir(v_star, cache)                 # scalar
-    cic  = c_ic(v_star, a_hats, cache)         # (n_total,)
+    cic  = c_ic(v_star, cache)                 # (n_fixed,)
     hfoc = h_foc(v_star, cache)                # scalar
 
     # dual value
@@ -206,21 +193,15 @@ def dual_value_and_grad(theta_vec, cache):
     # analytic gradient of obj = -g
     grad_lam     = -cir                          # scalar
     grad_mu      =  hfoc                         # scalar (since ∂g/∂μ = -h)
-    grad_muhats  = -cic                          # (n_total,)
-
-    # optional: gradients w.r.t floating a_hats
-    if n_floating_a_hat > 0:
-        a_float = a_hats[n_fixed_a_hat:]
-        # ∂g/∂a_i = μ_i * ∂U(v*, a_i)/∂a_i ⇒ grad_obj = -∂g/∂a_i
-        dU_da_at_ahat = vmap(
-            lambda a: jnp.vdot(w, v_star * d_density_d_a(y_grid, a)) - marginal_cost_of_effort(a)
-        )(a_float)
-        grad_a_float = -(mu_hats[n_fixed_a_hat:] * dU_da_at_ahat)
-    else:
-        grad_a_float = jnp.zeros((0,), dtype=theta_vec.dtype)
+    grad_muhats  = -cic                          # (n_fixed,)
 
     obj = -g
-    grad = jnp.concatenate([jnp.array([grad_lam, grad_mu]), grad_muhats, grad_a_float])
+    # Ensure grad_muhats is always at least 1D, even for n_a_hat = 0 or 1
+    # This avoids JAX concatenate errors when n_a_hat == 0 (empty) or 1 (scalar)
+    grad = jnp.concatenate([
+        jnp.array([grad_lam, grad_mu]),
+        jnp.atleast_1d(grad_muhats)
+    ])
     return obj, grad
 
 dual_value_and_grad_jit = jit(dual_value_and_grad)
@@ -230,21 +211,17 @@ dual_value_and_grad_jit = jit(dual_value_and_grad)
 # ===========================
 lam0 = 100.0
 mu0  = 100.0
-mu_hats0 = jnp.zeros(n_total_a_hat)               # shape (n_total_a_hat,)
-a_hat_floating0 = jnp.full((n_floating_a_hat,), 0.0)
-init = pack_initial_params(lam0, mu0, mu_hats0, a_hat_floating0)
+mu_hats0 = jnp.zeros(n_a_hat)               # shape (n_a_hat,)
+init = pack_initial_params(lam0, mu0, mu_hats0)
 
-# Bounds: lam >= 0; mu free; mu_hats >= 0; floating a_hats in [0, 120]
-a_min, a_max = 0.0, 120.0
+# Bounds: lam >= 0; mu free; mu_hats >= 0
 lower_bounds = jnp.concatenate([
     jnp.array([0.0, -jnp.inf]),                   # lam, mu
-    jnp.full((n_total_a_hat,), 0.0),              # mu_hats
-    jnp.full((n_floating_a_hat,), a_min)          # floating a_hats
+    jnp.full((n_a_hat,), 0.0)               # mu_hats
 ])
 upper_bounds = jnp.concatenate([
     jnp.array([ jnp.inf,  jnp.inf]),              # lam, mu
-    jnp.full((n_total_a_hat,),  jnp.inf),         # mu_hats
-    jnp.full((n_floating_a_hat,), a_max)          # floating a_hats
+    jnp.full((n_a_hat,),  jnp.inf)          # mu_hats
 ])
 bounds = (lower_bounds, upper_bounds)
 
@@ -260,15 +237,14 @@ rng = np.random.default_rng(SEED)
 noisy_intended_actions = BASE_INTENDED_ACTION + rng.normal(loc=0.0, scale=NOISE_SD, size=N_RUNS)
 
 # You can vary these two per run (values only; counts stay fixed):
-reservation_wages = np.linspace(0.0, 80.0, N_RUNS)  # example
-a_hat_fixed_sequences = np.tile([0.0, 50.0], (N_RUNS, 1))  # shape (N_RUNS, 2), same values for all runs
+reservation_wages = jnp.linspace(0.0, 80.0, N_RUNS)  # example
+a_hat_experiments = jnp.linspace(0.0, 140.0, n_a_hat)  # shape (2, ), same values for all runs
 
 # ===========================
 # Warm-up compile (once)
 # ===========================
 warm_res_utility = u(1.0)                          # pick a representative value
-warm_fixed = jnp.array([0.0, 50.0])                # representative fixed hats (shape must match)
-warm_cache = build_cache(BASE_INTENDED_ACTION, warm_res_utility, warm_fixed)
+warm_cache = build_cache(BASE_INTENDED_ACTION, warm_res_utility, a_hat_experiments)
 _ = dual_value_and_grad_jit(init, warm_cache)
 
 # Create solver once; fun signature is (theta, cache)
@@ -287,13 +263,12 @@ times = []
 solutions = []
 actions_used = []
 
-for i, (a0, rw, fixed_vals) in enumerate(zip(noisy_intended_actions,
-                                             reservation_wages,
-                                             a_hat_fixed_sequences), start=1):
+for i, (a0, rw) in enumerate(zip(noisy_intended_actions,
+                                             reservation_wages), start=1):
     cache = build_cache(
         float(a0),
         reservation_utility=float(u(rw)),         # vary reservation utility here
-        a_hat_fixed_vals=jnp.asarray(fixed_vals), # vary fixed hats VALUES here (same count)
+        a_hat_fixed_vals=a_hat_experiments, # vary fixed hats VALUES here (same count)
     )
 
     t0 = time.time()
@@ -305,14 +280,14 @@ for i, (a0, rw, fixed_vals) in enumerate(zip(noisy_intended_actions,
     solutions.append(params_opt)
     actions_used.append(a0)
 
-    print(f"Run {i:02d} | intended_action = {a0:6.2f} | U0 from rw={rw:.2f} | fixed={np.array2string(np.array(fixed_vals), precision=2)} | time = {dt:.4f} s")
+    print(f"Run {i:02d} | intended_action = {a0:6.2f} | U0 from rw={rw:.2f} | time = {dt:.4f} s")
 
 avg_time = sum(times) / len(times)
 print(f"\nAverage solve time over {N_RUNS} runs: {avg_time:.4f} s")
 
 # Unpack last solution for convenience
 theta_star = solutions[-1]
-lam_star, mu_star, mu_hats_star, a_hats_star = unpack_params(theta_star, cache)
+lam_star, mu_star, mu_hats_star = unpack_params(theta_star)
 
 #%%
 # ===========================
@@ -320,11 +295,10 @@ lam_star, mu_star, mu_hats_star, a_hats_star = unpack_params(theta_star, cache)
 # Objective: maximize a - expected_wage(v*(a))
 # ===========================
 LINESEARCH_GRID_N = 121  # simple, robust grid (objective may be discontinuous)
-a_grid = np.linspace(a_min, a_max, LINESEARCH_GRID_N)
+a_grid = np.linspace(0.0, 130.0, LINESEARCH_GRID_N)
 
 # Use the last run's reservation utility and fixed hats for the search
-res_util = float(u(80))
-fixed_vals = cache["a_hat_fixed"]
+res_util = float(u(50.0) - 10)  # example reservation utility
 
 best = {"a": None, "gap": -np.inf, "ew": None, "theta": None, "cache": None}
 theta_init = theta_star  # warm start from last solve
@@ -333,12 +307,12 @@ obj_values = []
 t0 = time.time()
 n_solver_runs = 0
 for a0 in a_grid:
-    c = build_cache(float(a0), res_util, fixed_vals)
+    c = build_cache(float(a0), res_util, a_hat_experiments)
     theta_opt, state = solver.run(theta_init, bounds, c)
     n_solver_runs += 1
 
-    lam, mu, mu_hats, a_hats = unpack_params(theta_opt, c)
-    v_star = canonical_contract_vec(lam, mu, mu_hats, a_hats, c)
+    lam, mu, mu_hats = unpack_params(theta_opt)
+    v_star = canonical_contract_vec(lam, mu, mu_hats, c)
     ew = float(expected_wage(v_star, c))
     gap = float(a0 - ew)
     obj_values.append(gap)
@@ -350,7 +324,7 @@ for a0 in a_grid:
 t1 = time.time()
 
 print(
-    f"\n[Line search] Best a in [{a_min:.1f}, {a_max:.1f}] is {best['a']:.4f} "
+    f"\n[Line search] Best a in [{a_grid.min():.1f}, {a_grid.max():.1f}] is {best['a']:.4f} "
     f"with (a - E[w]) = {best['gap']:.6f} and E[w] = {best['ew']:.6f} "
     f"| time = {t1 - t0:.4f} s | solver runs = {n_solver_runs}"
 )
@@ -376,11 +350,27 @@ plt.show()
 # Plot U(a) versus action for the best contract at best a
 # ===========================
 # Unpack best contract
-lam_b, mu_b, mu_hats_b, a_hats_b = unpack_params(theta_star_linesearch, cache_linesearch)
-v_star_best = canonical_contract_vec(lam_b, mu_b, mu_hats_b, a_hats_b, cache_linesearch)
+lam_b, mu_b, mu_hats_b = unpack_params(theta_star_linesearch)
+v_star_best = canonical_contract_vec(lam_b, mu_b, mu_hats_b, cache_linesearch)
+
+# Print lam, mu at optimal solution
+print(f"Optimal solution: lam = {lam_b:.6f}, mu = {mu_b:.6f}")
+
+# Print how many out of how many mu_hats_b are zero, and list y_grid entries where not zero
+zero_mask = np.isclose(np.array(mu_hats_b), 0.0)
+num_zero = np.sum(zero_mask)
+num_total = len(mu_hats_b)
+print(f"mu_hats_b: {num_zero} out of {num_total} are zero.")
+
+if num_zero < num_total:
+    nonzero_indices = np.where(~zero_mask)[0]
+    y_grid_vals = np.array(cache_linesearch["a_hat_fixed"])[nonzero_indices]
+    print("Nonzero mu_hats_b at y_grid entries:")
+    for idx, val, mu_val in zip(nonzero_indices, y_grid_vals, np.array(mu_hats_b)[nonzero_indices]):
+        print(f"  index {idx}: a_hat = {val:.4f}, mu_hat = {mu_val:.6f}")
 
 # Evaluate utility over a grid of actions
-a_eval_grid = np.linspace(a_min, a_max, 200)
+a_eval_grid = np.linspace(0.0, 140.0, 200)
 U_values = [float(U(v_star_best, a)) for a in a_eval_grid]
 
 plt.figure(figsize=(6,4))
@@ -390,5 +380,21 @@ plt.xlabel("Action a")
 plt.ylabel("U(a)")
 plt.title("Utility U(a) under best contract at best intended action")
 plt.legend()
+plt.tight_layout()
+plt.show()
+
+#%%
+# ===========================
+# Plot wage function k(v) as a function of y_grid for the optimal contract
+# ===========================
+# Uses v_star_best and y_grid already defined above
+
+wage_schedule = k(v_star_best)  # k(v(y)) in dollars
+
+plt.figure(figsize=(6,4))
+plt.plot(np.asarray(y_grid), np.asarray(wage_schedule), linewidth=1.5)
+plt.xlabel("Outcome y")
+plt.ylabel("Wage k(v(y))")
+plt.title("Wage schedule under optimal contract")
 plt.tight_layout()
 plt.show()
