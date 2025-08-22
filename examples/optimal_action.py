@@ -1,7 +1,7 @@
 import time
 import numpy as np
 from scipy.optimize import minimize_scalar
-from moral_hazard import MoralHazardProblem
+from moralhazard import MoralHazardProblem
 
 # ---- primitives (same as prototype Normal model) ----
 x0 = 50

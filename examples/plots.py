@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from moral_hazard import MoralHazardProblem
+from moralhazard import MoralHazardProblem
 
 # ---- primitives (same as prototype Normal model) ----
 x0 = 50

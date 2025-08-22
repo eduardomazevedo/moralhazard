@@ -1,7 +1,7 @@
 # examples/timing_10_runs.py
 import time
 import numpy as np
-from moral_hazard import MoralHazardProblem
+from moralhazard import MoralHazardProblem
 
 # ---- primitives (same as prototype Normal model) ----
 x0 = 50
