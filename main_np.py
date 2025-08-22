@@ -5,11 +5,12 @@ from math import sqrt, pi
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt  # optional
 
+
 # ===========
 # Parameters
 # ===========
 # Utility
-x0 = 50.0   # meaning 50k per year in consumption
+x0 = 50.0   # 50k baseline consumption
 u = lambda dollars: np.log(dollars + x0)
 k = lambda utils: np.exp(utils) - x0
 link_function_g = lambda x: np.log(np.maximum(x, x0))
@@ -24,17 +25,15 @@ def density(y, a):
     z = (y - a) / sigma
     return _norm_pdf(z) / sigma
 
-def d_density_d_a(y, a):
-    # derivative wrt a
-    return ((y - a) / (sigma ** 2)) * density(y, a)
-
-score = lambda y, a: (y - a) / sigma ** 2
+# Score s0(y) = (∂_a f / f)|_{a0} = (y-a0)/sigma^2 for Normal(a0, sigma^2)
+def score(y, a):
+    return (y - a) / (sigma ** 2)
 
 # Cost
 first_best_effort = 100
 theta = 1.0 / first_best_effort / (first_best_effort + x0)
-cost_of_effort = lambda a: theta * a ** 2 / 2
-marginal_cost_of_effort = lambda a: theta * a
+C       = lambda a: theta * a ** 2 / 2
+Cprime  = lambda a: theta * a
 
 # ==============================
 # Grid and Simpson's rule setup
@@ -55,152 +54,150 @@ w = w * (y_grid_step_size / 3.0)
 # =================================
 # Fixed a-hats (count only)
 # =================================
-n_a_hat = 2
+n_a_hat = 2  # adjust as needed
 
 # ======================================
-# Cache builder for (a0, U0, fixed hats)
+# Cache builder in canonical (math) form
 # ======================================
-def build_cache(a0: float,
-                reservation_utility: float,
-                a_hat_vals: np.ndarray):
+def make_cache(
+    a0: float,
+    reservation_utility: float,
+    a_hat_vals: np.ndarray,
+    *,
+    link_g = link_function_g,
+    k_fn   = k,
+    C_fn   = C,
+    Cprime_fn = Cprime
+):
     """
-    Build a small 'cache' of arrays that depend on the intended action a0,
-    the reservation utility, and the values of the fixed a-hats.
+    Build cached arrays per the vectorized canonical formulation.
+
+    Returns keys:
+      w, f0, s0, D, R, wf0, wf0s0, g, k, C, Cprime, Ubar, a0, a_hat
     """
     a0 = np.asarray(a0, dtype=y_grid.dtype)
     a_hat_vals = np.asarray(a_hat_vals, dtype=y_grid.dtype)
-    assert a_hat_vals.shape == (n_a_hat,), \
-        f"Expected fixed hats of shape {(n_a_hat,)}, got {a_hat_vals.shape}"
+    assert a_hat_vals.ndim == 1 and a_hat_vals.shape[0] == n_a_hat, \
+        f"Expected a_hat size {n_a_hat}, got {a_hat_vals.shape}"
 
-    # Precompute at a0
-    density_0 = density(y_grid, a0)                  # (y_n,)
-    d_density_d_a_0 = d_density_d_a(y_grid, a0)      # (y_n,)
-    score_0 = score(y_grid, a0)                      # (y_n,)
+    # Baseline density and score at a0
+    f0 = density(y_grid, a0)            # (y_n,)
+    s0 = score(y_grid, a0)              # (y_n,)
 
-    cost_of_effort_0 = cost_of_effort(a0)
-    marginal_cost_of_effort_0 = marginal_cost_of_effort(a0)
+    # Density matrix for fixed a-hats
+    D  = density(y_grid[:, None], a_hat_vals[None, :])  # (y_n, m)
 
-    # Weighted constants
-    w_density0 = w * density_0
-    w_d_density_da0 = w * d_density_d_a_0
-
-    # Precompute density columns for the FIXED a-hats (used in canonical contract)
-    dens_y_fixed = density(y_grid[:, None], a_hat_vals[None, :])  # (y_n, n_a_hat)
+    # Cached weights/products
+    wf0   = w * f0                    # (y_n,)
+    wf0s0 = wf0 * s0                  # (y_n,)
+    # R = 1 - D / f0[:,None]
+    # add tiny eps to avoid division issues if desired; f0>0 here for normal on R.
+    R = 1.0 - D / f0[:, None]
 
     return {
-        "a0": a0,
-        "reservation_utility": np.asarray(reservation_utility, dtype=y_grid.dtype),
-        "a_hat": a_hat_vals,           # (n_a_hat,)
-        "dens_y_fixed": dens_y_fixed,  # (y_n, n_a_hat)
-
-        "density_0": density_0,                    # (y_n,)
-        "d_density_d_a_0": d_density_d_a_0,        # (y_n,)
-        "score_0": score_0,                        # (y_n,)
-        "w_density0": w_density0,                  # (y_n,)
-        "w_d_density_da0": w_d_density_da0,        # (y_n,)
-        "cost_of_effort_0": cost_of_effort_0,      # scalar
-        "marginal_cost_of_effort_0": marginal_cost_of_effort_0,  # scalar
+        "w": w, "f0": f0, "s0": s0, "D": D, "R": R,
+        "wf0": wf0, "wf0s0": wf0s0,
+        "g": link_g, "k": k_fn, "C": C_fn, "Cprime": Cprime_fn,
+        "Ubar": np.asarray(reservation_utility, dtype=y_grid.dtype),
+        "a0": a0, "a_hat": a_hat_vals
     }
 
-# =========================================
-# Core functions parameterized by `cache`
-# =========================================
-def U(contract_vec, a):
-    # a: NumPy array or scalar
-    # contract_vec: shape (y_n,)
-    a_arr = np.atleast_1d(a)  # shape (1,) or (n,)
-    dens = density(y_grid[:, None], a_arr[None, :])  # (y_n, n_a)
-    util = np.sum(w[:, None] * contract_vec[:, None] * dens, axis=0) - cost_of_effort(a_arr)
-    return util.squeeze()
-
-def U_0(contract_vec, cache):
-    return np.vdot(cache["w_density0"], contract_vec) - cache["cost_of_effort_0"]
-
-def expected_wage(contract_vec, cache):
-    return np.vdot(cache["w_density0"], k(contract_vec))
-
-def d_U_d_a(contract_vec, cache):
-    return np.vdot(cache["w_d_density_da0"], contract_vec) - cache["marginal_cost_of_effort_0"]
-
-# =========================================
-# Canonical inner minimizer v*(λ, μ, μ_hat)
-# =========================================
-def canonical_contract_vec(lam, mu, mu_hats, cache, eps=1e-12):
+# ---------- Canonical contract (v = g(z)) ----------
+def canonical_contract(multipliers, cache):
     """
-    Build v*(y) from multipliers using ONLY fixed a-hats.
+    multipliers: tuple (lambda, mu, mu_hat) with mu_hat shape (m,)
     """
-    dens_y_fixed = cache["dens_y_fixed"]                        # (y_n, n_a_hat)
-    ratio = dens_y_fixed / np.maximum(cache["density_0"][:, None], eps)  # (y_n, n_a_hat)
-    hat_term = (1.0 - ratio) @ mu_hats                          # (y_n,)
-    z = lam + mu * cache["score_0"] + hat_term
-    return link_function_g(z)
+    lam, mu, mu_hat = multipliers
+    # z = lambda + mu * s0 + R @ mu_hat
+    z = lam + mu * cache["s0"] + cache["R"] @ mu_hat
+    v = cache["g"](z)
+    return {"z": z, "v": v}
 
-# =========================================
-# Constraint maps (residual forms)
-# =========================================
-def c_ir(v, cache):
-    # IR: U0 >= Ubar  <=>  Ubar - U0 <= 0
-    return cache["reservation_utility"] - U_0(v, cache)
+# ---------- Constraints and expected wage ----------
+def constraints(v, cache):
+    """
+    Returns:
+      U0, IR, FOC, Uhat, IC, Ewage
+    """
+    wf0, wf0s0 = cache["wf0"], cache["wf0s0"]
+    w_vec, D = cache["w"], cache["D"]
+    C_fn, Cprime_fn = cache["C"], cache["Cprime"]
+    a0, Ubar = cache["a0"], cache["Ubar"]
+    k_fn = cache["k"]
 
-def c_ic(v, cache):
-    # IC at sampled fixed points: U(a_hat_i) - U0 <= 0  (elementwise)
-    U0 = U_0(v, cache)
-    a_hats = cache["a_hat"]  # (n_a_hat,)
-    U_vec = U(v, a_hats)     # (n_a_hat,)
-    return U_vec - U0        # (n_a_hat,) <= 0
+    # U0 = ∫ v f0 - C(a0)
+    U0  = wf0 @ v - C_fn(a0)
 
-def h_foc(v, cache):
-    # equality at a0: dU/da(a0) = 0
-    return d_U_d_a(v, cache)
+    # FOC = ∫ v s0 f0 - C'(a0)
+    FOC = wf0s0 @ v - Cprime_fn(a0)
 
-# =========================================
-# Pack / unpack θ and analytic (value, grad)
-# =========================================
-# Layout: [ lam, mu, mu_hats (n_fixed) ]
-def unpack_params(theta_vec):
+    # Uhat = [ (w * D)^T @ v ] - C(a_hat)
+    # (w[:,None] * D) has shape (y_n, m), v has shape (y_n,)
+    Uhat = (w_vec[:, None] * D).T @ v - C_fn(cache["a_hat"])
+
+    # IC = Uhat - U0 (elementwise)
+    IC = Uhat - U0
+
+    # IR = Ubar - U0
+    IR = Ubar - U0
+
+    # Expected wage = ∫ k(v) f0
+    Ewage = wf0 @ k_fn(v)
+
+    return {"U0": U0, "IR": IR, "FOC": FOC,
+            "Uhat": Uhat, "IC": IC, "Ewage": Ewage}
+
+# ---------- Dual objective + gradient ----------
+def objective_with_grad(multipliers, constraints_dict, cache):
+    """
+    g_dual(θ) = E[w] + λ·IR - μ·FOC + μ̂^T IC
+    ∇ g_dual(θ) = (IR, -FOC, IC)
+    """
+    lam, mu, mu_hat = multipliers
+    IR  = constraints_dict["IR"]
+    FOC = constraints_dict["FOC"]
+    IC  = constraints_dict["IC"]
+    Ewage = constraints_dict["Ewage"]
+
+    g_dual = Ewage + lam * IR - mu * FOC + mu_hat @ IC
+    grad = (IR, -FOC, IC)
+    return g_dual, grad
+
+# ================
+# Optimizer Bridge
+# ================
+# θ layout: [ λ, μ, μ_hat[0], ..., μ_hat[m-1] ]
+def unpack_theta(theta_vec):
     lam = theta_vec[0]
     mu  = theta_vec[1]
-    mu_hats = theta_vec[2 : 2 + n_a_hat]
-    return lam, mu, mu_hats
+    mu_hat = theta_vec[2:]
+    return lam, mu, mu_hat
 
-def pack_initial_params(lam0, mu0, mu_hats0):
-    return np.concatenate([
-        np.array([lam0, mu0]),
-        mu_hats0
-    ])
+def pack_theta(lam, mu, mu_hat):
+    return np.concatenate([np.array([lam, mu], dtype=float), np.atleast_1d(mu_hat).astype(float)])
 
 def dual_value_and_grad(theta_vec, cache):
     """
-    g(θ) = L(v*(θ), θ) lagrange dual function.
-    We MINIMIZE obj = -g, so return (obj, grad_obj).
-    Danskin => ∂g/∂multiplier = constraint residual at v*(θ).
+    For use with minimizers: returns (obj, grad) for obj = -g_dual(θ).
+    By Danskin, gradient of g_dual w.r.t. multipliers is constraint residuals at v*(θ).
     """
-    lam, mu, mu_hats = unpack_params(theta_vec)
+    lam, mu, mu_hat = unpack_theta(theta_vec)
 
-    # inner argmin v*(θ) constructed analytically
-    v_star = canonical_contract_vec(lam, mu, mu_hats, cache)
+    # Inner canonical v*(θ)
+    v = canonical_contract((lam, mu, mu_hat), cache)["v"]
 
-    # constraint residuals at v*
-    cir  = c_ir(v_star, cache)           # scalar
-    cic  = c_ic(v_star, cache)           # (n_fixed,)
-    hfoc = h_foc(v_star, cache)          # scalar
+    # Constraints at v*
+    cons = constraints(v, cache)
 
-    # dual value
-    g = ( expected_wage(v_star, cache)
-          + lam * cir
-          - mu  * hfoc
-          + np.dot(mu_hats, cic) )
+    # Dual value and gradient
+    g_dual, grad_tuple = objective_with_grad((lam, mu, mu_hat), cons, cache)
 
-    # analytic gradient of obj = -g
-    grad_lam     = -cir
-    grad_mu      =  hfoc
-    grad_muhats  = -cic                   # (n_fixed,)
-
-    obj = -g
-    grad = np.concatenate([
-        np.array([grad_lam, grad_mu]),
-        np.atleast_1d(grad_muhats)
-    ])
+    # We minimize obj = -g_dual
+    obj = -g_dual
+    IR, negFOC, IC = grad_tuple
+    grad = np.concatenate([np.array([IR, negFOC], dtype=float), np.atleast_1d(IC).astype(float)])
+    # grad here is ∇g; optimizer needs ∇obj = -∇g
+    grad = -grad
     return obj, grad
 
 
@@ -229,7 +226,7 @@ def run_solver(theta_init, bounds, cache, maxiter=1000, tol=1e-8):
 lam0 = 100.0
 mu0  = 100.0
 mu_hats0 = np.zeros(n_a_hat)               # shape (n_a_hat,)
-init = pack_initial_params(lam0, mu0, mu_hats0)
+init = pack_theta(lam0, mu0, mu_hats0)
 
 # Bounds: lam >= 0; mu free; mu_hats >= 0
 lower_bounds = np.concatenate([
@@ -261,7 +258,7 @@ a_hat_experiments = np.zeros(n_a_hat)               # shape (n_a_hat, ), same va
 # Warm-up "compile" (no-op here, but keep parity)
 # ===========================
 warm_res_utility = u(1.0)
-warm_cache = build_cache(BASE_INTENDED_ACTION, warm_res_utility, a_hat_experiments)
+warm_cache = make_cache(BASE_INTENDED_ACTION, warm_res_utility, a_hat_experiments)
 _ = dual_value_and_grad(init, warm_cache)
 
 # ===========================
@@ -272,7 +269,7 @@ solutions = []
 actions_used = []
 
 for i, (a0, rw) in enumerate(zip(noisy_intended_actions, reservation_wages), start=1):
-    cache = build_cache(
+    cache = make_cache(
         float(a0),
         reservation_utility=float(u(rw)),         # vary reservation utility here
         a_hat_vals=a_hat_experiments,             # vary fixed hats VALUES here (same count)
@@ -302,6 +299,26 @@ def unpack_params(theta_vec):
 
 lam_star, mu_star, mu_hats_star = unpack_params(theta_star)
 
+
+#%%
+# ===========================
+# Helpers for the new API
+# ===========================
+def expected_wage_from_cache(v, cache):
+    """
+    E[w] under the baseline density f0 (i.e., at the cache's a0).
+    Uses the cached wf0 and k() consistent with the new make_cache().
+    """
+    return float(cache["wf0"] @ cache["k"](v))
+
+def U_of_a(v, a, cache):
+    """
+    U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the global y_grid
+    using Simpson weights in cache["w"] and density() defined above.
+    """
+    f_a = density(y_grid, a)
+    return float(cache["w"] @ (v * f_a) - cache["C"](a))
+
 #%%
 # ===========================
 # New experiment: line search over intended action a
@@ -320,13 +337,18 @@ obj_values = []
 t0 = time.time()
 n_solver_runs = 0
 for a0 in a_grid:
-    c = build_cache(float(a0), res_util, a_hat_experiments)
+    # build cache with the new function name/signature
+    c = make_cache(float(a0), res_util, a_hat_experiments)
     theta_opt, state = run_solver(theta_init, bounds, c, maxiter=1000, tol=1e-8)
     n_solver_runs += 1
 
+    # unpack and compute v*(θ) with the new canonical_contract API
     lam, mu, mu_hats = unpack_params(theta_opt)
-    v_star = canonical_contract_vec(lam, mu, mu_hats, c)
-    ew = float(expected_wage(v_star, c))
+    v_star = canonical_contract((lam, mu, mu_hats), c)["v"]
+
+    # expected wage under f0 in cache 'c'
+    ew = expected_wage_from_cache(v_star, c)
+
     gap = float(a0 - ew)
     obj_values.append(gap)
 
@@ -358,13 +380,76 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
+
+#%%
+# ===========================
+# NEW experiment (right after line search):
+# 1-D optimizer over the same interval to maximize a - E[w(v*(a))]
+# ===========================
+from scipy.optimize import minimize_scalar
+
+# We'll use the same bounds as the line search grid
+a_lo, a_hi = float(a_grid.min()), float(a_grid.max())
+
+def _solve_and_eval(a0, theta_init, res_util, a_hat_vals):
+    """
+    For a given intended action a0, build cache, solve dual for θ,
+    recover v*(θ), and return expected wage and objective gap a0 - E[w].
+    """
+    c = make_cache(float(a0), res_util, a_hat_vals)
+    theta_opt, _state = run_solver(theta_init, bounds, c, maxiter=1000, tol=1e-8)
+    lam, mu, mu_hats = unpack_params(theta_opt)
+    v_star = canonical_contract((lam, mu, mu_hats), c)["v"]
+    ew = expected_wage_from_cache(v_star, c)
+    gap = float(a0 - ew)
+    return theta_opt, c, ew, gap
+
+# Keep a warm-start across objective evaluations
+theta_last = theta_star  # start from the same warm start used for the line search
+n_solver_runs_opt = 0
+best_opt = {"a": None, "gap": -np.inf, "ew": None, "theta": None, "cache": None}
+
+def neg_objective(a0):
+    """Return - (a0 - E[w]) so we can use a minimizer."""
+    global theta_last, n_solver_runs_opt, best_opt
+    theta_opt, c, ew, gap = _solve_and_eval(a0, theta_last, res_util, a_hat_experiments)
+    n_solver_runs_opt += 1
+    # warm start next call
+    theta_last = theta_opt
+    # track best
+    if gap > best_opt["gap"]:
+        best_opt.update({"a": float(a0), "gap": gap, "ew": ew, "theta": theta_opt, "cache": c})
+    return -gap
+
+t0_opt = time.time()
+res_1d = minimize_scalar(neg_objective, bounds=(a_lo, a_hi), method="bounded",
+                         options={"xatol": 1e-2, "maxiter": 200})
+t1_opt = time.time()
+
+# Extract best found by the optimizer (we tracked it inside neg_objective)
+a_star_opt = best_opt["a"]
+gap_star_opt = best_opt["gap"]
+ew_star_opt = best_opt["ew"]
+time_opt = t1_opt - t0_opt
+
+# Comparison table
+print("\nComparison: Exhaustive grid search vs. 1-D optimizer on [a_min, a_max]")
+hdr = f"{'Method':<22} {'a*':>10} {'Objective a - E[w]':>20} {'E[w]':>12} {'Time (s)':>12} {'Solver runs':>14}"
+print(hdr)
+print("-" * len(hdr))
+row_grid = f"{'Grid (line search)':<22} {best['a']:>10.4f} {best['gap']:>20.6f} {best['ew']:>12.6f} {(t1 - t0):>12.4f} {n_solver_runs:>14d}"
+row_opt  = f"{'1-D optimizer':<22} {a_star_opt:>10.4f} {gap_star_opt:>20.6f} {ew_star_opt:>12.6f} {time_opt:>12.4f} {n_solver_runs_opt:>14d}"
+print(row_grid)
+print(row_opt)
+
+
 #%%
 # ===========================
 # Plot U(a) versus action for the best contract at best a
 # ===========================
 # Unpack best contract
 lam_b, mu_b, mu_hats_b = unpack_params(theta_star_linesearch)
-v_star_best = canonical_contract_vec(lam_b, mu_b, mu_hats_b, cache_linesearch)
+v_star_best = canonical_contract((lam_b, mu_b, mu_hats_b), cache_linesearch)["v"]
 
 # Print lam, mu at optimal solution
 print(f"Optimal solution: lam = {lam_b:.6f}, mu = {mu_b:.6f}")
@@ -384,7 +469,7 @@ if num_zero < num_total:
 
 # Evaluate utility over a grid of actions
 a_eval_grid = np.linspace(0.0, 140.0, 200)
-U_values = [float(U(v_star_best, a)) for a in a_eval_grid]
+U_values = [U_of_a(v_star_best, float(a), cache_linesearch) for a in a_eval_grid]
 
 plt.figure(figsize=(6,4))
 plt.plot(a_eval_grid, U_values, linewidth=1.5)
@@ -400,7 +485,7 @@ plt.show()
 # ===========================
 # Plot wage function k(v) as a function of y_grid for the optimal contract
 # ===========================
-wage_schedule = k(v_star_best)  # k(v(y)) in dollars
+wage_schedule = cache_linesearch["k"](v_star_best)  # k(v(y)) in dollars
 
 plt.figure(figsize=(6,4))
 plt.plot(np.asarray(y_grid), np.asarray(wage_schedule), linewidth=1.5)
@@ -415,7 +500,7 @@ plt.show()
 # Interactive experiment:
 # Pick a_hat from the argmax of U(a) on the plotted grid
 # ===========================
-U_vec = U(v_star_best, np.asarray(a_eval_grid))
+U_vec = np.array([U_of_a(v_star_best, float(a), cache_linesearch) for a in a_eval_grid])
 idx = int(np.argmax(U_vec))
 a_hat_from_U = float(np.asarray(a_eval_grid)[idx])
 
@@ -427,10 +512,10 @@ print(f"New a_hat_experiments = {a_hat_experiments_new}")
 # ===========================
 # Re-solve at the same intended action using the new hats
 # ===========================
-cache_new = build_cache(float(a_star_linesearch), res_util, a_hat_experiments_new)
+cache_new = make_cache(float(a_star_linesearch), res_util, a_hat_experiments_new)
 theta_opt_new, state = run_solver(theta_star_linesearch, bounds, cache_new, maxiter=1000, tol=1e-8)
 lam_n, mu_n, mu_hats_n = unpack_params(theta_opt_new)
-v_star_new = canonical_contract_vec(lam_n, mu_n, mu_hats_n, cache_new)
+v_star_new = canonical_contract((lam_n, mu_n, mu_hats_n), cache_new)["v"]
 
 # Print multipliers
 print(f"\n[New solution] lam = {lam_n:.6f}, mu = {mu_n:.6f}")
@@ -452,7 +537,7 @@ if num_zero_new < num_total_new:
 # ===========================
 # Compare old vs new U(a)
 # ===========================
-U_values_new = [float(U(v_star_new, a)) for a in a_eval_grid]
+U_values_new = [U_of_a(v_star_new, float(a), cache_new) for a in a_eval_grid]
 
 plt.figure(figsize=(6,4))
 plt.plot(a_eval_grid, U_values, linewidth=1.5, label="U(a) with old hats")
