@@ -101,9 +101,9 @@ def _run_solver(
 
     t0 = time.time()
     res = minimize(
-        fun=lambda th: _dual_value_and_grad(th, cache)[0],
+        fun=lambda theta: _dual_value_and_grad(theta, cache),
         x0=x0,
-        jac=lambda th: _dual_value_and_grad(th, cache)[1],
+        jac=True,
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": int(maxiter), "ftol": float(ftol)},
