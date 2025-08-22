@@ -14,16 +14,25 @@ def _dual_value_and_grad(theta: np.ndarray, cache: Dict[str, Any]) -> Tuple[floa
     Return (obj, grad) for a minimizer, where obj = -g_dual(θ)
     and grad = -∇g_dual(θ) with ∇ via Danskin on the inner optimum v*(θ).
 
-    g_dual(θ) = E[w] + λ·IR - μ·FOC + μ̂^T IC
-    ∇ g_dual(θ) = [ IR, -FOC, IC[:] ]
+    Assumes types already validated upstream.
     """
-    # Inner canonical v*(θ)
-    v = _canonical_contract(theta, cache)["v"]
+    n = cache["y_grid"].shape[0]
+    m = cache["a_hat"].shape[0]
 
-    # Constraints at v*
+    lam = float(theta[0])
+    mu = float(theta[1])
+    mu_hat = theta[2:]
+
+    if mu_hat.shape != (m,):
+        raise ValueError(f"theta[2:] must have shape {(m,)}; got {mu_hat.shape}")
+
+    # Inner optimum v*(θ) via canonical map
+    vm = _canonical_contract(theta, cache)
+    v = vm["v"]
+
+    # Constraints at v
     cons = _constraints(v, cache)
 
-    lam, mu, mu_hat = float(theta[0]), float(theta[1]), np.asarray(theta[2:], dtype=np.float64)
     IR = cons["IR"]
     FOC = cons["FOC"]
     IC = cons["IC"]
@@ -58,7 +67,6 @@ def _run_solver(
     """
     m = int(cache["a_hat"].shape[0])
     expected_shape = (2 + m,)
-
     warn_flags: list[str] = []
 
     def _init_vector():
@@ -91,23 +99,23 @@ def _run_solver(
     bounds += [(None, None)]  # mu
     bounds += [(0.0, None)] * m  # mu_hat[j]
 
-    t0 = time.perf_counter()
+    t0 = time.time()
     res = minimize(
-        fun=lambda th: _dual_value_and_grad(th, cache),
+        fun=lambda th: _dual_value_and_grad(th, cache)[0],
         x0=x0,
-        jac=True,
+        jac=lambda th: _dual_value_and_grad(th, cache)[1],
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": int(maxiter), "ftol": float(ftol)},
     )
-    t1 = time.perf_counter()
+    t1 = time.time()
 
     theta_opt = np.asarray(res.x, dtype=np.float64)
-    grad_final = np.asarray(res.jac, dtype=np.float64) if res.jac is not None else None
-    grad_norm = float(np.max(np.abs(grad_final))) if grad_final is not None else float("nan")
+    grad_norm = float(np.linalg.norm(np.asarray(res.jac, dtype=np.float64))) if hasattr(res, "jac") else None
 
     state = {
         "method": "L-BFGS-B",
+        "success": bool(res.success),
         "status": int(res.status),
         "message": str(res.message),
         "niter": int(getattr(res, "nit", -1)),
@@ -139,21 +147,38 @@ def _solve_fixed_a(
     last_theta: np.ndarray | None,
 ) -> tuple[SolveResults, Dict[str, Any], np.ndarray]:
     """
-    Internal wrapper: build cache, solve for θ*, form v*, compute constraints,
-    and package SolveResults. Returns (results, cache, theta_opt).
+    Solve at fixed action a0 and reservation utility Ubar, returning:
+      - SolveResults
+      - cache used
+      - theta_opt for warm-starting
     """
-    cache = _make_cache(a0, Ubar, a_hat, y_grid, w, primitives)
-    theta_opt, solver_state = _run_solver(theta_init, cache, last_theta=last_theta)
+    cache = _make_cache(float(a0), float(Ubar), a_hat, y_grid, w, primitives)
+    theta_opt, state = _run_solver(theta_init, cache, last_theta)
 
-    v = _canonical_contract(theta_opt, cache)["v"]
-    cons = _constraints(v, cache)
+    # Reconstruct v*(θ) and constraints for reporting
+    vm = _canonical_contract(theta_opt, cache)
+    v_star = vm["v"]
+    cons = _constraints(v_star, cache)
+
+    # Multipliers
+    m = int(a_hat.shape[0])
+    lam = float(theta_opt[0])
+    mu = float(theta_opt[1])
+    mu_hat = np.asarray(theta_opt[2:], dtype=np.float64).reshape((m,))
 
     results = SolveResults(
-        optimal_contract=v,
-        expected_wage=cons["Ewage"],
-        multipliers={"lam": float(theta_opt[0]), "mu": float(theta_opt[1]), "mu_hat": np.asarray(theta_opt[2:], dtype=np.float64)},
-        constraints=cons,
-        solver_state=solver_state,
+        optimal_contract=np.asarray(v_star, dtype=np.float64),
+        expected_wage=float(cons["Ewage"]),
+        multipliers={"lam": lam, "mu": mu, "mu_hat": mu_hat},
+        constraints={
+            "U0": float(cons["U0"]),
+            "IR": float(cons["IR"]),
+            "FOC": float(cons["FOC"]),
+            "Uhat": np.asarray(cons["Uhat"], dtype=np.float64),
+            "IC": np.asarray(cons["IC"], dtype=np.float64),
+            "Ewage": float(cons["Ewage"]),
+        },
+        solver_state=state,
     )
     return results, cache, theta_opt
 

@@ -15,15 +15,10 @@ def _make_cache(
     """
     Build all per-solve, vectorized arrays (immutable in practice).
 
-    Shapes & invariants:
-      - y_grid.shape == w.shape == (n,)
-      - a_hat is 1D (m,)
-      - f0[i] > 0 for all i (else raise)
+    Assumes boundary layer already validated/coerced types.
     """
     a0 = float(a0)
     Ubar = float(Ubar)
-
-    a_hat = np.asarray(a_hat, dtype=np.float64)
     if a_hat.ndim != 1:
         raise ValueError(f"a_hat must be a 1D array; got shape {a_hat.shape}")
 
@@ -33,7 +28,7 @@ def _make_cache(
     score = primitives["score"]
 
     # Baseline density and score
-    f0 = np.asarray(f(y_grid, a0), dtype=np.float64)  # (n,)
+    f0 = f(y_grid, a0)  # (n,)
     if f0.shape != n_shape:
         raise ValueError(f"f(y_grid, a0) must return shape {n_shape} aligned with the internal grid; got {f0.shape}")
 
@@ -41,7 +36,7 @@ def _make_cache(
         # policy: fail fast; user adjusts tails / grid
         raise RuntimeError("Encountered zero/near-zero baseline density on grid; adjust y_min/y_max or model tails")
 
-    s0 = np.asarray(score(y_grid, a0), dtype=np.float64)  # (n,)
+    s0 = score(y_grid, a0)  # (n,)
     if s0.shape != n_shape:
         raise ValueError(f"score(y_grid, a0) must return shape {n_shape} aligned with the internal grid; got {s0.shape}")
 
@@ -50,7 +45,7 @@ def _make_cache(
         D = np.zeros((y_grid.shape[0], 0), dtype=np.float64)
     else:
         # Only require vectorization in y; build columns by looping over a_hat.
-        D = np.column_stack([np.asarray(f(y_grid, float(a)), dtype=np.float64) for a in a_hat])
+        D = np.column_stack([f(y_grid, float(a)) for a in a_hat])
 
     # Cached weights/products
     wf0 = w * f0
@@ -99,7 +94,7 @@ def _canonical_contract(theta: np.ndarray, cache: Dict[str, Any]) -> Dict[str, n
     """
     lam = float(theta[0])
     mu = float(theta[1])
-    mu_hat = np.asarray(theta[2:], dtype=np.float64)
+    mu_hat = theta[2:]
 
     s0 = cache["s0"]
     R = cache["R"]
@@ -143,13 +138,13 @@ def _constraints(v: np.ndarray, cache: Dict[str, Any]) -> Dict[str, Any]:
     if D.size == 0:
         Uhat = np.zeros((0,), dtype=np.float64)
     else:
-        Uhat = (w[:, None] * D).T @ v - np.asarray(C(cache["a_hat"]), dtype=np.float64)
+        Uhat = (w[:, None] * D).T @ v - C(cache["a_hat"])
     IC = Uhat - U0
 
     # IR
     IR = float(Ubar - U0)
 
     # Expected wage
-    Ewage = float(wf0 @ np.asarray(k(v), dtype=np.float64))
+    Ewage = float(wf0 @ k(v))
 
     return {"U0": U0, "IR": IR, "FOC": FOC, "Uhat": Uhat, "IC": IC, "Ewage": Ewage}

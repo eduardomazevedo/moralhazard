@@ -59,6 +59,21 @@ class MoralHazardProblem:
             "f": p["f"],
             "score": p["score"],
         }
+        # Tiny fast checks: run user callables once at [0, 0]
+        try:
+            y0 = np.asarray([0.0], dtype=np.float64)
+            a0 = float(0.0)
+            v0 = np.zeros_like(y0)
+            # Run each primitive once; ignore outputs except basic sanity where cheap
+            _ = self._primitives["f"](y0, a0)
+            _ = self._primitives["score"](y0, a0)
+            _ = self._primitives["g"](v0)
+            _ = self._primitives["k"](v0)
+            _ = float(self._primitives["C"](a0))
+            _ = float(self._primitives["Cprime"](a0))
+        except Exception as e:
+            raise TypeError(f"Primitive callable check failed on [0,0]: {e}")
+
         self._y_grid = y_grid
         self._w = w
         self._last_theta: np.ndarray | None = None  # class-level warm start
@@ -78,7 +93,6 @@ class MoralHazardProblem:
 
     def solve_cost_minimization_problem(
         self,
-        *,
         intended_action: float,
         reservation_utility: float,
         a_hat: np.ndarray,
@@ -113,7 +127,6 @@ class MoralHazardProblem:
 
     def expected_wage_fun(
         self,
-        *,
         reservation_utility: float,
         a_hat: np.ndarray,
         warm_start: bool = True,
@@ -143,18 +156,14 @@ class MoralHazardProblem:
 
     def U(self, v: np.ndarray, a: float | np.ndarray) -> np.ndarray:
         """
-        U(a) =  v(y) f(y|a) dy - C(a), evaluated on the internal Simpson grid.
+        U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the internal Simpson grid.
 
-        Args
-        ----
-        v : np.ndarray
-            Contract in utility units evaluated on self.y_grid; shape (n,).
-        a : float | array-like
-            Scalar or array of actions.
+        Inputs:
+          - v : must have shape equal to self.y_grid.shape; coerced to float64
+          - a : scalar or 1D array; coerced to float64
 
-        Returns
-        -------
-        np.ndarray with same shape as a, dtype float64.
+        Returns:
+          - scalar if a is scalar; 1D array otherwise (float64)
         """
         v_arr = np.asarray(v, dtype=np.float64)
         expected = self._y_grid.shape

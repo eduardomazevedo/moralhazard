@@ -24,6 +24,7 @@ def _make_grid(y_min: float, y_max: float, n: int) -> tuple[np.ndarray, np.ndarr
         raise ValueError(f"n must be >= 3; got {n}")
     if n % 2 == 0:
         raise ValueError(f"n must be odd for Simpson's rule; got even n={n}")
+
     y_min = float(y_min)
     y_max = float(y_max)
     if not (y_max > y_min):
