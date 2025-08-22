@@ -12,8 +12,6 @@ import matplotlib.pyplot as plt  # optional
 x0 = 50.0   # meaning 50k per year in consumption
 u = lambda dollars: np.log(dollars + x0)
 k = lambda utils: np.exp(utils) - x0
-k_prime = lambda utils: np.exp(utils)
-k_prime_inverse = lambda utils: np.log(utils)
 link_function_g = lambda x: np.log(np.maximum(x, x0))
 
 # Distribution (normal pdf and related terms without SciPy)
@@ -205,23 +203,19 @@ def dual_value_and_grad(theta_vec, cache):
     ])
     return obj, grad
 
-# SciPy wrappers: separate fun and jac, same bounds/behavior as before
-def _fun(theta, cache):
-    obj, _ = dual_value_and_grad(theta, cache)
-    return float(obj)
-
-def _jac(theta, cache):
-    _, grad = dual_value_and_grad(theta, cache)
-    return grad
 
 def run_solver(theta_init, bounds, cache, maxiter=1000, tol=1e-8):
     # SciPy wants bounds as sequence of (low, high)
     lo, hi = bounds
     scipy_bounds = tuple((float(l), float(h)) for (l, h) in zip(lo, hi))
+    def fun_and_jac(theta, cache):
+        obj, grad = dual_value_and_grad(theta, cache)
+        return float(obj), grad
+
     res = minimize(
-        fun=_fun,
+        fun=lambda theta, cache: fun_and_jac(theta, cache),
         x0=np.asarray(theta_init, dtype=float),
-        jac=_jac,
+        jac=True,
         args=(cache,),
         method="L-BFGS-B",
         bounds=scipy_bounds,
