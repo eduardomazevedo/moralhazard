@@ -143,7 +143,7 @@ class MoralHazardProblem:
 
     def U(self, v: np.ndarray, a: float | np.ndarray) -> np.ndarray:
         """
-        U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the internal Simpson grid.
+        U(a) =  v(y) f(y|a) dy - C(a), evaluated on the internal Simpson grid.
 
         Args
         ----
@@ -164,13 +164,12 @@ class MoralHazardProblem:
         f = self._primitives["f"]
         C = self._primitives["C"]
 
-        def _u_of_scalar(a0: float) -> float:
-            f_a = np.asarray(f(self._y_grid, float(a0)), dtype=np.float64)
-            return float(self._w @ (v_arr * f_a) - C(float(a0)))
-
-        if np.ndim(a) == 0:
-            return np.array(_u_of_scalar(float(a)), dtype=np.float64)
-
-        a_vec = np.asarray(a, dtype=np.float64).ravel()
-        out = np.array([_u_of_scalar(float(a0)) for a0 in a_vec], dtype=np.float64)
-        return out.reshape(np.shape(a))
+        a_arr = np.asarray(a, dtype=np.float64)
+        orig_shape = np.shape(a_arr)
+        a_vec = a_arr.ravel()
+        # f(self._y_grid[:, None], a_vec) should return shape (n, m)
+        f_a = np.asarray(f(self._y_grid[:, None], a_vec), dtype=np.float64)  # shape (n, m)
+        integrals = self._w @ (v_arr[:, None] * f_a)  # shape (m,)
+        costs = np.asarray(C(a_vec), dtype=np.float64)  # shape (m,)
+        out = integrals - costs
+        return out.reshape(orig_shape)
