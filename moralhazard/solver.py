@@ -49,64 +49,72 @@ def _dual_value_and_grad(theta: np.ndarray, cache: Dict[str, Any]) -> Tuple[floa
     return -float(g_dual), -grad  # minimizer expects -g and -∇g
 
 
-def _run_solver(
-    theta_init: np.ndarray | None,
-    cache: Dict[str, Any],
+def _minimize_cost_a_hat(
+    a0: float,
+    Ubar: float,
+    a_hat: np.ndarray,
+    *,
+    y_grid: np.ndarray,
+    w: np.ndarray,
+    primitives: Dict[str, Any],
+    theta_init: np.ndarray | None = None,
     last_theta: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
-) -> tuple[np.ndarray, dict]:
+) -> tuple[SolveResults, Dict[str, Any], np.ndarray]:
     """
-    L-BFGS-B bridge with v0 bounds policy:
-      lam ∈ [0, +∞), mu ∈ (-∞, +∞), mu_hat[j] ∈ [0, +∞)
+    Solve the dual at fixed action a0 and reservation utility Ubar.
 
-    Warm-start preference:
-      1) user-provided theta_init (if shape matches)
-      2) class-level last_theta (if shape matches)
-      3) default [100.0, 100.0, zeros(m)]
+    Returns:
+      - SolveResults
+      - cache used
+      - theta_opt for warm-starting
     """
+    # Build cache
+    cache = _make_cache(float(a0), float(Ubar), np.asarray(a_hat, dtype=np.float64), y_grid, w, primitives)
+
+    # Initialization policy with warm-start
     m = int(cache["a_hat"].shape[0])
     expected_shape = (2 + m,)
     warn_flags: list[str] = []
 
-    def _init_vector():
-        nonlocal warn_flags
-        # Option 1: user-provided
+    def _select_x0() -> np.ndarray:
+        # 1) user-provided theta_init
         if theta_init is not None:
             ti = np.asarray(theta_init, dtype=np.float64)
             if ti.shape == expected_shape and np.all(np.isfinite(ti)):
                 return ti
             warn_flags.append("theta_init_shape_mismatch_or_nonfinite")
 
-        # Option 2: class warm-start
+        # 2) class-level last_theta
         if last_theta is not None:
             lt = np.asarray(last_theta, dtype=np.float64)
             if lt.shape == expected_shape and np.all(np.isfinite(lt)):
                 return lt
             warn_flags.append("class_warm_start_shape_mismatch_or_nonfinite")
 
-        # Option 3: default
+        # 3) default
         vec = np.zeros(expected_shape, dtype=np.float64)
-        vec[0] = 100.0  # lam0
-        vec[1] = 100.0  # mu0
-        # mu_hat already zeros
+        vec[0] = 100.0  # lam0 ≥ 0
+        vec[1] = 100.0  # mu0 free (unbounded)
+        # mu_hat already zeros (≥ 0)
         return vec
 
-    x0 = _init_vector()
+    x0 = _select_x0()
 
-    # Bounds in SciPy: use None for unbounded ends
-    bounds = [(0.0, None)]  # lam
-    bounds += [(None, None)]  # mu
-    bounds += [(0.0, None)] * m  # mu_hat[j]
+    # Bounds: lam ∈ [0, ∞), mu ∈ (-∞, ∞), each mu_hat[j] ∈ [0, ∞)
+    bounds = [(0.0, None)] + [(None, None)] + [(0.0, None)] * m
 
+    # Solve
     t0 = time.time()
     res = minimize(
-        fun=lambda theta: _dual_value_and_grad(theta, cache),
+        fun=_dual_value_and_grad,
         x0=x0,
         jac=True,
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": int(maxiter), "ftol": float(ftol)},
+        args=(cache,),
     )
     t1 = time.time()
 
@@ -129,31 +137,7 @@ def _run_solver(
         state["warn_flags"] = warn_flags
 
     if not res.success:
-        # v0 error text is part of the spec
         raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
-
-    return theta_opt, state
-
-
-def _solve_fixed_a(
-    a0: float,
-    Ubar: float,
-    a_hat: np.ndarray,
-    theta_init: np.ndarray | None,
-    *,
-    y_grid: np.ndarray,
-    w: np.ndarray,
-    primitives: Dict[str, Any],
-    last_theta: np.ndarray | None,
-) -> tuple[SolveResults, Dict[str, Any], np.ndarray]:
-    """
-    Solve at fixed action a0 and reservation utility Ubar, returning:
-      - SolveResults
-      - cache used
-      - theta_opt for warm-starting
-    """
-    cache = _make_cache(a0, Ubar, a_hat, y_grid, w, primitives)
-    theta_opt, state = _run_solver(theta_init, cache, last_theta)
 
     # Reconstruct v*(θ) and constraints for reporting
     vm = _canonical_contract(theta_opt, cache)
@@ -161,7 +145,6 @@ def _solve_fixed_a(
     cons = _constraints(v_star, cache)
 
     # Multipliers
-    m = int(a_hat.shape[0])
     lam = float(theta_opt[0])
     mu = float(theta_opt[1])
     mu_hat = np.asarray(theta_opt[2:], dtype=np.float64).reshape((m,))
@@ -196,33 +179,46 @@ def _make_expected_wage_fun(
     """
     Factory returning F(a) = E[w(v*(a))] with an optional warm start across calls.
 
-    Attributes on returned callable:
+    Attributes on returned callable (kept live across calls):
       - .last_theta: np.ndarray | None
       - .call_count: int
       - .reset(): None
     """
-    last_theta_ref: np.ndarray | None = np.asarray(last_theta_seed, dtype=np.float64) if last_theta_seed is not None else None
+    last_theta_ref: np.ndarray | None = (
+        np.asarray(last_theta_seed, dtype=np.float64) if last_theta_seed is not None else None
+    )
     call_count = 0
 
     def F(a: float) -> float:
         nonlocal last_theta_ref, call_count
         theta_init = last_theta_ref if warm_start else None
-        results, _cache, theta_opt = _solve_fixed_a(
-            float(a), float(Ubar), np.asarray(a_hat, dtype=np.float64), theta_init,
-            y_grid=y_grid, w=w, primitives=primitives, last_theta=last_theta_ref
+        results, _cache, theta_opt = _minimize_cost_a_hat(
+            float(a),
+            float(Ubar),
+            np.asarray(a_hat, dtype=np.float64),
+            y_grid=y_grid,
+            w=w,
+            primitives=primitives,
+            theta_init=theta_init,
+            last_theta=last_theta_ref,
         )
         if warm_start:
             last_theta_ref = theta_opt
         call_count += 1
+        # keep attributes in sync
+        F.last_theta = last_theta_ref  # type: ignore[attr-defined]
+        F.call_count = call_count      # type: ignore[attr-defined]
         return float(results.expected_wage)
 
-    # Lightweight attributes
     def _reset():
         nonlocal last_theta_ref, call_count
         last_theta_ref = None
         call_count = 0
+        F.last_theta = last_theta_ref  # type: ignore[attr-defined]
+        F.call_count = call_count      # type: ignore[attr-defined]
 
-    F.last_theta = last_theta_ref
-    F.call_count = call_count
-    F.reset = _reset  # type: ignore[attr-defined]
+    # initialize lightweight attributes
+    F.last_theta = last_theta_ref      # type: ignore[attr-defined]
+    F.call_count = call_count          # type: ignore[attr-defined]
+    F.reset = _reset                   # type: ignore[attr-defined]
     return F

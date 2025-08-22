@@ -6,7 +6,7 @@ import numpy as np
 
 from .types import SolveResults
 from .grids import _make_grid
-from .solver import _solve_fixed_a, _make_expected_wage_fun
+from .solver import _minimize_cost_a_hat, _make_expected_wage_fun
 
 
 class MoralHazardProblem:
@@ -110,14 +110,14 @@ class MoralHazardProblem:
         # Warm-start preference: passed theta_init; else class-level last_theta
         init = theta_init if theta_init is not None else self._last_theta
 
-        results, _cache, theta_opt = _solve_fixed_a(
+        results, _cache, theta_opt = _minimize_cost_a_hat(
             float(intended_action),
             float(reservation_utility),
             a_hat_arr,
-            init,
             y_grid=self._y_grid,
             w=self._w,
             primitives=self._primitives,
+            theta_init=init,
             last_theta=self._last_theta,
         )
 
