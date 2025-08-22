@@ -8,6 +8,7 @@ wheels/
 
 # tex
 *.minted
+**/_minted/
 *.aux
 *.log
 *.out
