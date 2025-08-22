@@ -8,8 +8,8 @@ This document enumerates internals (names, signatures, shapes, invariants) to gu
 
 * **Dtype:** `np.float64` everywhere unless explicitly documented.
 * **Grid (fixed in v0):** `y_grid = np.linspace(y_min, y_max, n)`
-* **Weights:** Simpson weights `w` on `y_grid`, shape `(201,)`, same dtype as `y_grid`.
-* **Vectorization convention:** All functions that accept `y` must be vectorized over `y` and accept `np.ndarray` of shape `(201,)`. Functions that accept `a` must accept scalar floats; vectorization over `a` only where specified.
+* **Weights:** Simpson weights `w` on `y_grid`, shape `(n,)`, same dtype as `y_grid`.
+* **Vectorization convention:** All functions that accept `y` must be vectorized over `y` and accept `np.ndarray` of shape `(n,)`. Functions that accept `a` must accept scalar floats; vectorization over `a` only where specified.
 
 ---
 
@@ -41,8 +41,8 @@ Built per solve; immutable in practice.
 
 ```python
 _make_cache(
-  y_grid: np.ndarray,                  # (201,)
-  w: np.ndarray,                       # (201,)
+  y_grid: np.ndarray,                  # (n,)
+  w: np.ndarray,                       # (n,)
   a0: float,                           # intended action
   Ubar: float,                         # reservation utility
   a_hat: np.ndarray,                   # (m,)
@@ -53,13 +53,13 @@ _make_cache(
 **Contents & shapes**
 
 * Scalars: `a0: float`, `Ubar: float`
-* Arrays on `(201,)`:
+* Arrays on `(n,)`:
 
   * `f0 = f(y_grid, a0)` (baseline density)
   * `s0 = score(y_grid, a0)`
   * `wf0 = w * f0`
   * `wf0s0 = wf0 * s0`
-* Matrices on `(201, m)`:
+* Matrices on `(n, m)`:
 
   * `D = f(y_grid[:, None], a_hat[None, :])`
   * `R = 1 - D / f0[:, None]` (requires `f0 > 0`; see Numerical Safeguards)
@@ -75,7 +75,7 @@ _make_cache(
 
 * `f0[i] > 0` for all `i` (or epsilon policy applied consistently—see safeguards).
 * `a_hat.ndim == 1`.
-* `y_grid.shape == w.shape == (201,)`.
+* `y_grid.shape == w.shape == (n,)`.
 
 ---
 
@@ -91,18 +91,18 @@ _canonical_contract(theta: np.ndarray, cache: dict) -> dict
 **Operations**
 
 * Unpack `θ → (lam: float, mu: float, mu_hat: np.ndarray (m,))`.
-* Compute `z = lam + mu * s0 + R @ mu_hat`  → `(201,)`.
-* Compute `v = g(z)` → `(201,)`.
+* Compute `z = lam + mu * s0 + R @ mu_hat`  → `(n,)`.
+* Compute `v = g(z)` → `(n,)`.
 
 **Returns**
 
 ```python
-{"z": np.ndarray (201,), "v": np.ndarray (201,)}
+{"z": np.ndarray (n,), "v": np.ndarray (n,)}
 ```
 
 **Invariants**
 
-* Broadcasts must preserve `(201,)`.
+* Broadcasts must preserve `(n,)`.
 
 ---
 
@@ -290,7 +290,7 @@ The public `MoralHazardProblem` uses the above internals:
 
   * If `a` is scalar: compute `w @ (v * f(y_grid, a)) - C(a)`.
   * If array-like: loop or vectorize over `a` to return same-shape array.
-  * Validate `v.shape == (201,)`.
+  * Validate `v.shape == (n,)`.
 
 ---
 
@@ -302,7 +302,7 @@ The public `MoralHazardProblem` uses the above internals:
 * **`y_min` present** (float) → else `KeyError`.
 * **Grid invariants** enforced at construction:
 
-  * `y_grid.shape == (201,)`, `w.shape == (201,)`.
+  * `y_grid.shape == (n,)`, `w.shape == (n,)`.
 * **`a_hat` validation** in all relevant methods:
 
   * `np.asarray(a_hat, dtype=float)`; must be 1D, else `ValueError`.
@@ -311,7 +311,7 @@ The public `MoralHazardProblem` uses the above internals:
   * If `np.any(f0 <= 0)` → raise `RuntimeError` with advice to adjust tails (`y_min`) or primitives.
 * **Contract shape** in `U`:
 
-  * If `v.shape != (201,)` → `ValueError`.
+  * If `v.shape != (n,)` → `ValueError`.
 
 ---
 
@@ -327,7 +327,7 @@ The public `MoralHazardProblem` uses the above internals:
 
 * **Warm-start** is the main speed lever across `a`.
 * **Allocation discipline**: prefer reusing arrays inside `_make_cache` only if it doesn’t leak state; otherwise keep it simple and allocate (v0).
-* **Avoid Python loops** on `(201,)` dimension; rely on vectorized ops and BLAS-level matvecs.
+* **Avoid Python loops** on `(n,)` dimension; rely on vectorized ops and BLAS-level matvecs.
 
 ---
 
@@ -335,7 +335,7 @@ The public `MoralHazardProblem` uses the above internals:
 
 1. **Shapes**
 
-   * `v`, `z` `(201,)`; `D`, `R` `(201, m)`; `mu_hat` `(m,)`.
+   * `v`, `z` `(n,)`; `D`, `R` `(n, m)`; `mu_hat` `(m,)`.
 2. **Simple normal model smoke test**
 
    * Constant functions or trivial costs to ensure gradients wired correctly.

@@ -16,7 +16,7 @@ moral_hazard/                 # top-level package
 │
 ├── grids.py                   # grid construction
 │   └── _make_grid(y_min: float) -> (y_grid, w)
-│       • builds y_grid of length 201 (odd, step=1.0)
+│       • builds y_grid of length n (odd, step=1.0)
 │       • builds Simpson weights w
 │
 ├── core.py                    # mathematical core
@@ -24,7 +24,7 @@ moral_hazard/                 # top-level package
 │       • f0, s0, wf0, wf0s0, D, R, g, k, C, Cprime, Ubar, a0, a_hat
 │
 │   └── _canonical_contract(theta, cache) -> dict
-│       • returns {"z": (201,), "v": (201,)}
+│       • returns {"z": (n,), "v": (n,)}
 │
 │   └── _constraints(v, cache) -> dict
 │       • returns {"U0", "IR", "FOC", "Uhat", "IC", "Ewage"}

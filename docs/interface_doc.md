@@ -39,7 +39,7 @@ class MoralHazardProblem:
 * Validates required callables in `problem_params`.
 * Builds and stores a fixed outcome grid:
 
-  * `self.y_grid`: `np.ndarray` of shape `(201,)`, values `y_min + 0..200`.
+  * `self.y_grid`: `np.ndarray` of shape `(n,)`, values `y_min + 0..200`.
   * `self.weights`: Simpson weights computed on `self.y_grid` (odd length required).
 * Keeps direct references to `u, k, link_function (g), C, Cprime, f, score`.
 * No I/O, no plotting, no RNG.
@@ -113,7 +113,7 @@ def U(self, v: np.ndarray, a: float | np.ndarray) -> np.ndarray:
     Computes U(a) = ∫ v(y) f(y|a) dy - C(a) on the internal Simpson grid.
 
     Args:
-      v: contract in utility units evaluated on self.y_grid; shape (201,).
+      v: contract in utility units evaluated on self.y_grid; shape (n,).
       a: scalar or 1D array of actions.
 
     Returns:
@@ -130,7 +130,7 @@ def U(self, v: np.ndarray, a: float | np.ndarray) -> np.ndarray:
 ```python
 @dataclass(frozen=True)
 class SolveResults:
-    optimal_contract: np.ndarray         # v*(y), shape (201,)
+    optimal_contract: np.ndarray         # v*(y), shape (n,)
     expected_wage: float                 # ∫ k(v*(y)) f(y|a0) dy
     multipliers: dict                    # {"lam": float, "mu": float, "mu_hat": np.ndarray}
     constraints: dict                    # {"U0": float, "IR": float, "FOC": float,
@@ -152,7 +152,7 @@ class SolveResults:
 
   * `a_hat` not 1D: `ValueError("a_hat must be a 1D array; got shape {a_hat.shape}")`
   * Contract length mismatch in `U`:
-    `ValueError("v must have shape (201,); got {v.shape}")`
+    `ValueError("v must have shape (n,); got {v.shape}")`
 
 * Numerical sanity
 
@@ -208,7 +208,7 @@ moral_hazard/
   types.py                   # SolveResults dataclass
   core.py                    # cache builder, canonical map, constraints (private)
   solver.py                  # dual objective & optimizer bridge (private)
-  grids.py                   # grid + Simpson weights using y_min, n=201, step=1.0 (private)
+  grids.py                   # grid + Simpson weights using y_min, n=n, step=1.0 (private)
 ```
 
 That’s it—lean and locked. If you want, I can add the precise docstrings as they’d appear in code comments (one-liners), still without implementations.
