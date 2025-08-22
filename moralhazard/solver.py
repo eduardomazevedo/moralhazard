@@ -152,7 +152,7 @@ def _solve_fixed_a(
       - cache used
       - theta_opt for warm-starting
     """
-    cache = _make_cache(float(a0), float(Ubar), a_hat, y_grid, w, primitives)
+    cache = _make_cache(a0, Ubar, a_hat, y_grid, w, primitives)
     theta_opt, state = _run_solver(theta_init, cache, last_theta)
 
     # Reconstruct v*(θ) and constraints for reporting

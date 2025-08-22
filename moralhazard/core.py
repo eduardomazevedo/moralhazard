@@ -17,45 +17,31 @@ def _make_cache(
 
     Assumes boundary layer already validated/coerced types.
     """
-    a0 = float(a0)
-    Ubar = float(Ubar)
-    if a_hat.ndim != 1:
-        raise ValueError(f"a_hat must be a 1D array; got shape {a_hat.shape}")
-
-    n_shape = y_grid.shape
-
     f = primitives["f"]
     score = primitives["score"]
 
     # Baseline density and score
     f0 = f(y_grid, a0)  # (n,)
-    if f0.shape != n_shape:
-        raise ValueError(f"f(y_grid, a0) must return shape {n_shape} aligned with the internal grid; got {f0.shape}")
-
-    if np.any(f0 <= 0.0):
-        # policy: fail fast; user adjusts tails / grid
-        raise RuntimeError("Encountered zero/near-zero baseline density on grid; adjust y_min/y_max or model tails")
 
     s0 = score(y_grid, a0)  # (n,)
-    if s0.shape != n_shape:
-        raise ValueError(f"score(y_grid, a0) must return shape {n_shape} aligned with the internal grid; got {s0.shape}")
 
     # Density matrix at fixed comparison actions a_hat: (n, m)
-    if a_hat.size == 0:
-        D = np.zeros((y_grid.shape[0], 0), dtype=np.float64)
-    else:
-        # Only require vectorization in y; build columns by looping over a_hat.
-        D = np.column_stack([f(y_grid, float(a)) for a in a_hat])
+    D = f(y_grid[:, None], a_hat[None, :])
 
     # Cached weights/products
     wf0 = w * f0
     wf0s0 = wf0 * s0
 
     # R = 1 - D / f0 (broadcast along columns)
-    if D.size == 0:
-        R = np.zeros((y_grid.shape[0], 0), dtype=np.float64)
-    else:
-        R = 1.0 - D / f0[:, None]
+    # Ratio for the global ic constraints
+    R = 1.0 - D / f0[:, None]  # (n, m)
+
+    C = primitives["C"]
+    Cprime = primitives["Cprime"]
+    # Cache C0, Cprime0, C_hat, Cprime_hat
+    C0 = C(a0)
+    Cprime0 = Cprime(a0)
+    C_hat = C(a_hat)
 
     return {
         "y_grid": y_grid,
@@ -69,11 +55,14 @@ def _make_cache(
         "wf0s0": wf0s0,
         "D": D,
         "R": R,
+        "C0": C0,
+        "Cprime0": Cprime0,
+        "C_hat": C_hat,
         # function refs
         "g": primitives["g"],
         "k": primitives["k"],
-        "C": primitives["C"],
-        "Cprime": primitives["Cprime"],
+        "C": C,
+        "Cprime": Cprime,
     }
 
 
@@ -92,19 +81,17 @@ def _canonical_contract(theta: np.ndarray, cache: Dict[str, Any]) -> Dict[str, n
     -------
     {"z": np.ndarray (n,), "v": np.ndarray (n,)}
     """
-    lam = float(theta[0])
-    mu = float(theta[1])
+    lam = theta[0]
+    mu = theta[1]
     mu_hat = theta[2:]
 
     s0 = cache["s0"]
     R = cache["R"]
     g = cache["g"]
 
-    z = lam + mu * s0
-    if mu_hat.size:
-        z = z + R @ mu_hat
+    z = lam + mu * s0 + R @ mu_hat
 
-    v = np.asarray(g(z), dtype=np.float64)
+    v = g(z)
     return {"z": z, "v": v}
 
 
@@ -124,27 +111,25 @@ def _constraints(v: np.ndarray, cache: Dict[str, Any]) -> Dict[str, Any]:
 
     w, wf0, wf0s0 = cache["w"], cache["wf0"], cache["wf0s0"]
     D = cache["D"]
-    a0, Ubar = cache["a0"], cache["Ubar"]
-    C, Cprime = cache["C"], cache["Cprime"]
+    Ubar = cache["Ubar"]
+    C0, Cprime0 = cache["C0"], cache["Cprime0"]
+    C_hat = cache["C_hat"]
     k = cache["k"]
 
     # U0 = ∫ v f0 - C(a0)
-    U0 = float(wf0 @ v - C(a0))
+    U0 = wf0 @ v - C0
 
     # FOC = ∫ v s0 f0 - C'(a0)
-    FOC = float(wf0s0 @ v - Cprime(a0))
+    FOC = wf0s0 @ v - Cprime0
 
     # Uhat (m,) and IC = Uhat - U0
-    if D.size == 0:
-        Uhat = np.zeros((0,), dtype=np.float64)
-    else:
-        Uhat = (w[:, None] * D).T @ v - C(cache["a_hat"])
+    Uhat = (w[:, None] * D).T @ v - C_hat
     IC = Uhat - U0
 
     # IR
-    IR = float(Ubar - U0)
+    IR = Ubar - U0
 
     # Expected wage
-    Ewage = float(wf0 @ k(v))
+    Ewage = wf0 @ k(v)
 
     return {"U0": U0, "IR": IR, "FOC": FOC, "Uhat": Uhat, "IC": IC, "Ewage": Ewage}
