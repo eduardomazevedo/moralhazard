@@ -9,36 +9,37 @@ from .types import SolveResults
 from .core import _make_cache, _canonical_contract, _constraints
 
 
-def _dual_value_and_grad(theta: np.ndarray, cache: Dict[str, Any]) -> Tuple[float, np.ndarray]:
+def _dual_value_and_grad(
+    theta: np.ndarray,
+    cache: Dict[str, Any],
+    g: Callable[[np.ndarray], np.ndarray],
+    k: Callable[[np.ndarray], np.ndarray],
+    Ubar: float,
+) -> Tuple[float, np.ndarray]:
     """
     Return (obj, grad) for a minimizer, where obj = -g_dual(θ)
     and grad = -∇g_dual(θ) with ∇ via Danskin on the inner optimum v*(θ).
 
     Assumes types already validated upstream.
     """
-    n = cache["y_grid"].shape[0]
-    m = cache["a_hat"].shape[0]
+    m = cache["R"].shape[1]
 
-    lam = float(theta[0])
-    mu = float(theta[1])
+    lam = theta[0]
+    mu = theta[1]
     mu_hat = theta[2:]
 
-    if mu_hat.shape != (m,):
-        raise ValueError(f"theta[2:] must have shape {(m,)}; got {mu_hat.shape}")
-
     # Inner optimum v*(θ) via canonical map
-    vm = _canonical_contract(theta, cache)
-    v = vm["v"]
+    v = _canonical_contract(theta, cache["s0"], cache["R"], g)
 
     # Constraints at v
-    cons = _constraints(v, cache)
+    cons = _constraints(v, cache, k=k, Ubar=float(Ubar))
 
     IR = cons["IR"]
     FOC = cons["FOC"]
     IC = cons["IC"]
     Ewage = cons["Ewage"]
 
-    g_dual = Ewage + lam * IR - mu * FOC + (mu_hat @ IC if IC.size else 0.0)
+    g_dual = Ewage + lam * IR - mu * FOC + mu_hat @ IC
 
     # ∇g
     grad = np.empty_like(theta, dtype=np.float64)
@@ -67,14 +68,23 @@ def _minimize_cost_a_hat(
 
     Returns:
       - SolveResults
-      - cache used
+      - cache used (precomputed arrays only)
       - theta_opt for warm-starting
     """
-    # Build cache
-    cache = _make_cache(float(a0), float(Ubar), np.asarray(a_hat, dtype=np.float64), y_grid, w, primitives)
+    # Build precomputed cache (no primitives or raw params stored)
+    cache = _make_cache(
+        float(a0),
+        np.asarray(a_hat, dtype=np.float64),
+        np.asarray(y_grid, dtype=np.float64),
+        np.asarray(w, dtype=np.float64),
+        f=primitives["f"],
+        score=primitives["score"],
+        C=primitives["C"],
+        Cprime=primitives["Cprime"],
+    )
 
     # Initialization policy with warm-start
-    m = int(cache["a_hat"].shape[0])
+    m = int(cache["R"].shape[1])
     expected_shape = (2 + m,)
     warn_flags: list[str] = []
 
@@ -114,7 +124,7 @@ def _minimize_cost_a_hat(
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": int(maxiter), "ftol": float(ftol)},
-        args=(cache,),
+        args=(cache, primitives["g"], primitives["k"], float(Ubar)),
     )
     t1 = time.time()
 
@@ -140,9 +150,8 @@ def _minimize_cost_a_hat(
         raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
 
     # Reconstruct v*(θ) and constraints for reporting
-    vm = _canonical_contract(theta_opt, cache)
-    v_star = vm["v"]
-    cons = _constraints(v_star, cache)
+    v_star = _canonical_contract(theta_opt, cache["s0"], cache["R"], primitives["g"])
+    cons = _constraints(v_star, cache, k=primitives["k"], Ubar=float(Ubar))
 
     # Multipliers
     lam = float(theta_opt[0])
