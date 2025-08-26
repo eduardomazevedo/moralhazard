@@ -19,35 +19,59 @@ def f(y, a):
 def score(y, a):
     return (y - a) / (sigma ** 2)
 
-cfg = {
-    "problem_params": {"u": u, "k": k, "link_function": g, "C": C, "Cprime": Cprime, "f": f, "score": score},
-    "computational_params": {"y_min": 0.0 - 3 * sigma, "y_max": 120.0 + 3 * sigma, "n": 201},
-}
-
-mhp = MoralHazardProblem(cfg)
-
-# --- experiment config (prototype-like) ---
+# --- experiment config ---
 BASE_INTENDED_ACTION = 80.0
 NOISE_SD = 5.0
 N_RUNS = 10
 SEED = 123
+a_max = 140.0
+
+# Update grid to accommodate a_max
+cfg = {
+    "problem_params": {"u": u, "k": k, "link_function": g, "C": C, "Cprime": Cprime, "f": f, "score": score},
+    "computational_params": {"y_min": 0.0 - 3 * sigma, "y_max": a_max + 3 * sigma, "n": 201},
+}
+
+mhp = MoralHazardProblem(cfg)
+
 rng = np.random.default_rng(SEED)
 a_list = BASE_INTENDED_ACTION + rng.normal(0.0, NOISE_SD, N_RUNS)
 rw_list = np.linspace(0.0, 80.0, N_RUNS)        # vary reservation wage; pass u(rw)
 a_hat = np.zeros(2)
 
-times = []
+print("=== Timing a_hat solver ===")
+times_a_hat = []
 for i, (a0, rw) in enumerate(zip(a_list, rw_list), 1):
     t0 = time.perf_counter()
     _ = mhp.solve_cost_minimization_problem(
         intended_action=float(a0),
         reservation_utility=float(u(rw)),
+        solver="a_hat",
         a_hat=a_hat,
     )
     t1 = time.perf_counter()
     dt = t1 - t0
-    times.append(dt)
+    times_a_hat.append(dt)
     print(f"Run {i:02d}: a={a0:6.2f}, Ubar=u({rw:5.2f})  time={dt:.4f}s")
 
-print("\nAll times (s):", ", ".join(f"{t:.4f}" for t in times))
-print(f"Mean time (s): {np.mean(times):.4f}")
+print("\n=== Timing iterative solver ===")
+times_iterative = []
+for i, (a0, rw) in enumerate(zip(a_list, rw_list), 1):
+    t0 = time.perf_counter()
+    _ = mhp.solve_cost_minimization_problem(
+        intended_action=float(a0),
+        reservation_utility=float(u(rw)),
+        solver="iterative",
+        a_max=a_max,
+    )
+    t1 = time.perf_counter()
+    dt = t1 - t0
+    times_iterative.append(dt)
+    print(f"Run {i:02d}: a={a0:6.2f}, Ubar=u({rw:5.2f})  time={dt:.4f}s")
+
+print("\n=== Summary ===")
+print("a_hat solver times (s):", ", ".join(f"{t:.4f}" for t in times_a_hat))
+print(f"a_hat solver mean time (s): {np.mean(times_a_hat):.4f}")
+print("iterative solver times (s):", ", ".join(f"{t:.4f}" for t in times_iterative))
+print(f"iterative solver mean time (s): {np.mean(times_iterative):.4f}")
+print(f"Speedup (iterative/a_hat): {np.mean(times_iterative)/np.mean(times_a_hat):.2f}x")

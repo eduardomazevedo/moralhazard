@@ -6,7 +6,7 @@ import numpy as np
 
 from .types import SolveResults
 from .grids import _make_grid
-from .solver import _minimize_cost_a_hat
+from .solver import _minimize_cost_a_hat, _minimize_cost_iterative
 from .utils import _make_expected_wage_fun
 from .core import _compute_expected_utility
 
@@ -95,52 +95,110 @@ class MoralHazardProblem:
         self,
         intended_action: float,
         reservation_utility: float,
-        a_hat: np.ndarray,
+        solver: str = "a_hat",
+        a_hat: np.ndarray | None = None,
+        a_min: float | None = None,
+        a_max: float | None = None,
+        n_a_iterations: int = 1,
         theta_init: np.ndarray | None = None,
     ) -> SolveResults:
         """
         Solve the dual for the cost-minimizing contract at a given intended action a0.
 
-        Returns a SolveResults object.
-        """
-        a_hat_arr = np.asarray(a_hat, dtype=np.float64)
-        if a_hat_arr.ndim != 1:
-            raise ValueError(f"a_hat must be a 1D array; got shape {a_hat_arr.shape}")
+        Args:
+            intended_action: The intended action a0
+            reservation_utility: The reservation utility Ubar
+            solver: Either "a_hat" (default) or "iterative"
+            a_hat: Required when solver="a_hat". The action grid for the solve.
+            a_min: Required when solver="iterative". Minimum action for grid search. Defaults to 0.0.
+            a_max: Required when solver="iterative". Maximum action for grid search.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
+            theta_init: Optional initial theta for warm-starting.
 
-        results, theta_opt = _minimize_cost_a_hat(
-            float(intended_action),
-            float(reservation_utility),
-            a_hat_arr,
-            y_grid=self._y_grid,
-            w=self._w,
-            f=self._primitives["f"],
-            score=self._primitives["score"],
-            C=self._primitives["C"],
-            Cprime=self._primitives["Cprime"],
-            g=self._primitives["g"],
-            k=self._primitives["k"],
-            theta_init=theta_init,
-        )
+        Returns:
+            SolveResults object.
+        """
+        if solver not in ["a_hat", "iterative"]:
+            raise ValueError(f"solver must be 'a_hat' or 'iterative', got '{solver}'")
+
+        if solver == "a_hat":
+            if a_hat is None:
+                raise ValueError("a_hat is required when solver='a_hat'")
+            
+            a_hat_arr = np.asarray(a_hat, dtype=np.float64)
+            if a_hat_arr.ndim != 1:
+                raise ValueError(f"a_hat must be a 1D array; got shape {a_hat_arr.shape}")
+
+            results, theta_opt = _minimize_cost_a_hat(
+                float(intended_action),
+                float(reservation_utility),
+                a_hat_arr,
+                y_grid=self._y_grid,
+                w=self._w,
+                f=self._primitives["f"],
+                score=self._primitives["score"],
+                C=self._primitives["C"],
+                Cprime=self._primitives["Cprime"],
+                g=self._primitives["g"],
+                k=self._primitives["k"],
+                theta_init=theta_init,
+            )
+        else:  # solver == "iterative"
+            if a_max is None:
+                raise ValueError("a_max is required when solver='iterative'")
+            
+            # Set default a_min if not provided
+            if a_min is None:
+                a_min = 0.0
+
+            results, theta_opt = _minimize_cost_iterative(
+                a0=float(intended_action),
+                Ubar=float(reservation_utility),
+                a_min=float(a_min),
+                a_max=float(a_max),
+                n_a_iterations=int(n_a_iterations),
+                y_grid=self._y_grid,
+                w=self._w,
+                f=self._primitives["f"],
+                score=self._primitives["score"],
+                C=self._primitives["C"],
+                Cprime=self._primitives["Cprime"],
+                g=self._primitives["g"],
+                k=self._primitives["k"],
+                theta_init=theta_init,
+            )
 
         return results
 
     def expected_wage_fun(
         self,
         reservation_utility: float,
-        a_hat: np.ndarray,
+        solver: str = "a_hat",
+        a_hat: np.ndarray | None = None,
+        a_min: float | None = None,
+        a_max: float | None = None,
+        n_a_iterations: int = 1,
         warm_start: bool = True,
     ) -> "Callable[[float], float]":
         """
         Returns F(a) = E[w(v*(a))] where v*(a) is the cost-minimizing contract
-        at intended action a for the provided Ū and a_hat.
+        at intended action a for the provided Ū and solver parameters.
 
-        Warm-start policy:
-          - when warm_start=True, successive calls reuse the last θ* found
-            inside the returned function (does NOT mutate class-level warm start).
+        Args:
+            reservation_utility: The reservation utility Ubar
+            solver: Either "a_hat" (default) or "iterative"
+            a_hat: Required when solver="a_hat". The action grid for the solve.
+            a_min: Required when solver="iterative". Minimum action for grid search. Defaults to 0.0.
+            a_max: Required when solver="iterative". Maximum action for grid search.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
+            warm_start: When True, successive calls reuse the last θ* found
+                       inside the returned function (does NOT mutate class-level warm start).
+
+        Returns:
+            Callable function F(a) that returns the expected wage for action a.
         """
-        a_hat_arr = np.asarray(a_hat, dtype=np.float64)
-        if a_hat_arr.ndim != 1:
-            raise ValueError(f"a_hat must be a 1D array; got shape {a_hat_arr.shape}")
+        if solver not in ["a_hat", "iterative"]:
+            raise ValueError(f"solver must be 'a_hat' or 'iterative', got '{solver}'")
 
         F = _make_expected_wage_fun(
             y_grid=self._y_grid,
@@ -152,9 +210,14 @@ class MoralHazardProblem:
             g=self._primitives["g"],
             k=self._primitives["k"],
             Ubar=float(reservation_utility),
-            a_hat=a_hat_arr,
+            solver=solver,
+            a_hat=a_hat,
+            a_min=a_min,
+            a_max=a_max,
+            n_a_iterations=n_a_iterations,
             warm_start=bool(warm_start),
         )
+
         return F
 
     def U(self, v: np.ndarray, a: float | np.ndarray) -> np.ndarray:
