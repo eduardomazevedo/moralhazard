@@ -66,13 +66,12 @@ def _minimize_cost_a_hat(
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
-) -> tuple[SolveResults, Dict[str, Any], np.ndarray]:
+) -> tuple[SolveResults, np.ndarray]:
     """
     Solve the dual at fixed action a0 and reservation utility Ubar.
 
     Returns:
       - SolveResults
-      - cache used (precomputed arrays only)
       - theta_opt for warm-starting
     """
     # Build precomputed cache (no primitives or raw params stored)
@@ -168,7 +167,7 @@ def _minimize_cost_a_hat(
         },
         solver_state=state,
     )
-    return results, cache, theta_opt
+    return results, theta_opt
 
 
 def _minimize_cost_iterative(
@@ -190,7 +189,7 @@ def _minimize_cost_iterative(
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
-) -> tuple[SolveResults, Dict[str, Any], np.ndarray]:
+) -> tuple[SolveResults, np.ndarray]:
     """
     Solve the dual iteratively by updating a_hat based on expected utility maximization.
     
@@ -222,7 +221,6 @@ def _minimize_cost_iterative(
         
     Returns:
         - SolveResults from final iteration
-        - cache used (precomputed arrays only)
         - theta_opt for warm-starting
     """
     # Create action grid for utility evaluation
@@ -239,7 +237,7 @@ def _minimize_cost_iterative(
         a_hat = np.array([0.0, a_current])
         
         # Solve the cost minimization problem
-        results, cache, theta_opt = _minimize_cost_a_hat(
+        results, theta_opt = _minimize_cost_a_hat(
             a0=a0,
             Ubar=Ubar,
             a_hat=a_hat,
@@ -333,7 +331,7 @@ def _minimize_cost_iterative(
         solver_state=results.solver_state,
     )
     
-    return final_results, cache, current_theta
+    return final_results, current_theta
 
 
 

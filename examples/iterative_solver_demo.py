@@ -48,7 +48,7 @@ for n_iterations in iteration_counts:
     print(f"--- {n_iterations} iterations ---")
     
     # Solve using the iterative method
-    results, cache, theta_opt = _minimize_cost_iterative(
+    results, theta_opt = _minimize_cost_iterative(
         a0=a0,
         Ubar=Ubar,
         a_min=a_min,
@@ -86,7 +86,6 @@ for n_iterations in iteration_counts:
     results_by_iteration[n_iterations] = {
         'results': results,
         'theta_opt': theta_opt,
-        'cache': cache,
         'a_current': a_current
     }
     

@@ -107,7 +107,7 @@ class MoralHazardProblem:
         if a_hat_arr.ndim != 1:
             raise ValueError(f"a_hat must be a 1D array; got shape {a_hat_arr.shape}")
 
-        results, _cache, theta_opt = _minimize_cost_a_hat(
+        results, theta_opt = _minimize_cost_a_hat(
             float(intended_action),
             float(reservation_utility),
             a_hat_arr,

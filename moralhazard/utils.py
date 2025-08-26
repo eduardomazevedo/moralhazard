@@ -34,7 +34,7 @@ def _make_expected_wage_fun(
     def F(a: float) -> float:
         nonlocal last_theta_ref, call_count
         theta_init = last_theta_ref if warm_start else None
-        results, _cache, theta_opt = _minimize_cost_a_hat(
+        results, theta_opt = _minimize_cost_a_hat(
             float(a),
             float(Ubar),
             np.asarray(a_hat, dtype=np.float64),
