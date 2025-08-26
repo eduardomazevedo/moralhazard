@@ -152,6 +152,9 @@ def _minimize_cost_a_hat(
     mu_hat = np.asarray(theta_opt[2:], dtype=np.float64).reshape((m,))
 
     results = SolveResults(
+        a0=float(a0),
+        Ubar=float(Ubar),
+        a_hat=np.asarray(a_hat, dtype=np.float64),
         optimal_contract=np.asarray(v_star, dtype=np.float64),
         expected_wage=float(cons["Ewage"]),
         multipliers={"lam": lam, "mu": mu, "mu_hat": mu_hat},
@@ -313,9 +316,24 @@ def _minimize_cost_iterative(
                 # Fall back to grid optimum if optimization fails
                 a_current = grid_opt_a
     
-    # Return the final results
+    # Return the final results with consistent structure
     a_hat = np.array([0.0, a_current])
-    return results, cache, current_theta, a_hat
+    
+    # Create a new SolveResults object with the final a_hat value
+    # The results object already has the correct a0, Ubar, and other fields
+    # We just need to update the a_hat field to reflect the final value
+    final_results = SolveResults(
+        a0=results.a0,
+        Ubar=results.Ubar,
+        a_hat=np.asarray(a_hat, dtype=np.float64),
+        optimal_contract=results.optimal_contract,
+        expected_wage=results.expected_wage,
+        multipliers=results.multipliers,
+        constraints=results.constraints,
+        solver_state=results.solver_state,
+    )
+    
+    return final_results, cache, current_theta
 
 
 

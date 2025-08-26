@@ -48,7 +48,7 @@ for n_iterations in iteration_counts:
     print(f"--- {n_iterations} iterations ---")
     
     # Solve using the iterative method
-    results, cache, theta_opt, a_hat = _minimize_cost_iterative(
+    results, cache, theta_opt = _minimize_cost_iterative(
         a0=a0,
         Ubar=Ubar,
         a_min=a_min,
@@ -66,7 +66,7 @@ for n_iterations in iteration_counts:
     )
     
     # Extract a_current from a_hat (a_hat = [0.0, a_current])
-    a_current = a_hat[1] if len(a_hat) > 1 else 0.0
+    a_current = results.a_hat[1] if len(results.a_hat) > 1 else 0.0
     
     # Extract multipliers and constraints
     lam = results.multipliers["lam"]
