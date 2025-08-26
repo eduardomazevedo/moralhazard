@@ -7,7 +7,8 @@ import numpy as np
 from .types import SolveResults
 from .grids import _make_grid
 from .solver import _minimize_cost_a_hat
-from .utils import _make_expected_wage_fun, _compute_expected_utility
+from .utils import _make_expected_wage_fun
+from .core import _compute_expected_utility
 
 
 class MoralHazardProblem:

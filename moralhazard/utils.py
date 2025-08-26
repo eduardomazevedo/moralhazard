@@ -70,43 +70,4 @@ def _make_expected_wage_fun(
     return F
 
 
-def _compute_expected_utility(
-    v: np.ndarray,
-    a: float | np.ndarray,
-    y_grid: np.ndarray,
-    w: np.ndarray,
-    f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
-    C: Callable[[float | np.ndarray], float | np.ndarray],
-) -> float | np.ndarray:
-    """
-    Compute U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the Simpson grid.
 
-    Inputs:
-      - v : must have shape equal to y_grid.shape
-      - a : scalar or 1D array
-      - y_grid : outcome grid
-      - w : Simpson weights
-      - f : density function
-      - C : cost function
-
-    Returns:
-      - scalar if a is scalar; 1D array otherwise
-    """
-    # Check input types but don't convert
-    if not isinstance(v, np.ndarray):
-        raise TypeError(f"v must be a numpy array; got {type(v)}")
-    if v.shape != y_grid.shape:
-        raise ValueError(f"v must have shape {y_grid.shape}; got {v.shape}")
-    
-    if not isinstance(a, (float, int, np.ndarray)):
-        raise TypeError(f"a must be scalar or numpy array; got {type(a)}")
-
-    # Let NumPy broadcasting handle both scalar and array inputs
-    if isinstance(a, np.ndarray) and a.ndim != 1:
-        raise ValueError(f"a must be 1D array; got shape {a.shape}")
-    
-    # f(y_grid[:, None], a) works for both scalar and array a due to broadcasting
-    f_a = f(y_grid[:, None], a)
-    integrals = w @ (v[:, None] * f_a)  # shape (m,) for array a, scalar for scalar a
-    costs = C(a)  # shape (m,) for array a, scalar for scalar a
-    return integrals - costs

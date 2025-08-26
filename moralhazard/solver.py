@@ -3,10 +3,10 @@ from __future__ import annotations
 import time
 from typing import Dict, Any, Callable, Tuple
 import numpy as np
-from scipy.optimize import minimize
+from scipy.optimize import minimize, minimize_scalar
 
 from .types import SolveResults
-from .core import _make_cache, _canonical_contract, _constraints
+from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
 
 
 def _dual_value_and_grad(
@@ -166,6 +166,156 @@ def _minimize_cost_a_hat(
         solver_state=state,
     )
     return results, cache, theta_opt
+
+
+def _minimize_cost_iterative(
+    a0: float,
+    Ubar: float,
+    *,
+    a_min: float,
+    a_max: float,
+    n_a_grid: int = 100,
+    n_a_iterations: int = 1,
+    y_grid: np.ndarray,
+    w: np.ndarray,
+    f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
+    score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
+    C: Callable[[float | np.ndarray], float | np.ndarray],
+    Cprime: Callable[[float | np.ndarray], float | np.ndarray],
+    g: Callable[[np.ndarray], np.ndarray],
+    k: Callable[[np.ndarray], np.ndarray],
+    theta_init: np.ndarray | None = None,
+    maxiter: int = 1000,
+    ftol: float = 1e-8,
+) -> tuple[SolveResults, Dict[str, Any], np.ndarray]:
+    """
+    Solve the dual iteratively by updating a_hat based on expected utility maximization.
+    
+    This method iteratively solves the cost minimization problem by:
+    1. Starting with a_current = (a_min + a_max) / 2
+    2. Solving with a_hat = [0, a_current]
+    3. Computing expected utility for all actions in the grid
+    4. Updating a_current to maximize U + tie-breaking penalty
+    5. Repeating for n_a_iterations
+    
+    Args:
+        a0: intended action
+        Ubar: reservation utility
+        a_min: minimum action for grid search
+        a_max: maximum action for grid search
+        n_a_grid: number of grid points for action search
+        n_a_iterations: number of iterations to perform (after the initial guess)
+        y_grid: outcome grid
+        w: Simpson weights
+        f: density function
+        score: score function
+        C: cost function
+        Cprime: derivative of cost function
+        g: link function
+        k: wage function
+        theta_init: optional initial theta for warm-starting
+        maxiter: maximum iterations for optimizer
+        ftol: function tolerance for optimizer
+        
+    Returns:
+        - SolveResults from final iteration
+        - cache used (precomputed arrays only)
+        - theta_opt for warm-starting
+    """
+    # Create action grid for utility evaluation
+    a_grid = np.linspace(a_min, a_max, n_a_grid)
+    
+    # Initialize a_current as midpoint
+    a_current = (a_min + a_max) / 2
+    
+    # Initialize theta for warm-starting across iterations
+    current_theta = theta_init
+    
+    for iteration in range(n_a_iterations + 1):
+        # Set a_hat for this iteration
+        a_hat = np.array([0.0, a_current])
+        
+        # Solve the cost minimization problem
+        results, cache, theta_opt = _minimize_cost_a_hat(
+            a0=a0,
+            Ubar=Ubar,
+            a_hat=a_hat,
+            y_grid=y_grid,
+            w=w,
+            f=f,
+            score=score,
+            C=C,
+            Cprime=Cprime,
+            g=g,
+            k=k,
+            theta_init=current_theta,
+            maxiter=maxiter,
+            ftol=ftol,
+        )
+        
+        # Update theta for next iteration
+        current_theta = theta_opt
+        
+        # Only update a_current if this isn't the last iteration
+        if iteration < n_a_iterations:
+            # Compute expected utility for all actions in the grid
+            v_optimal = results.optimal_contract
+            U_values = _compute_expected_utility(
+                v=v_optimal,
+                a=a_grid,
+                y_grid=y_grid,
+                w=w,
+                f=f,
+                C=C,
+            )
+            
+            # Exclude actions within 1/10 of grid range if n_a_grid >= 20, no exclusion otherwise
+            exclusion_radius = (a_max - a_min) / 10 * (n_a_grid >= 20)
+            exclude_mask = np.abs(a_grid - a0) > exclusion_radius
+            
+            # If all actions are excluded, fall back to no exclusion
+            if not np.any(exclude_mask):
+                exclude_mask = np.ones_like(a_grid, dtype=bool)
+            
+            # Find the action that maximizes utility among non-excluded actions
+            max_idx = np.argmax(U_values[exclude_mask])
+            # Convert back to original grid index
+            max_idx = np.where(exclude_mask)[0][max_idx]
+            grid_opt_a = float(a_grid[max_idx])
+            
+            # Refine with 1D optimization starting from grid optimum
+            def neg_utility(a):
+                a_val = float(a)
+                # Add penalty if action is too close to intended action
+                if abs(a_val - a0) <= exclusion_radius:
+                    return 1e6  # Large penalty
+                return -float(_compute_expected_utility(
+                    v=v_optimal,
+                    a=a_val,
+                    y_grid=y_grid,
+                    w=w,
+                    f=f,
+                    C=C,
+                ))
+            
+            # Use minimize_scalar with Brent's method for 1D optimization
+            # Brent's method is more robust for 1D optimization than L-BFGS-B
+            opt_result = minimize_scalar(
+                neg_utility,
+                bracket=(a_min, grid_opt_a, a_max),  # Provide bracket for Brent's method
+                method='brent',
+                options={'xtol': 1e-8}
+            )
+            
+            if opt_result.success:
+                a_current = float(opt_result.x)
+            else:
+                # Fall back to grid optimum if optimization fails
+                a_current = grid_opt_a
+    
+    # Return the final results
+    a_hat = np.array([0.0, a_current])
+    return results, cache, current_theta, a_hat
 
 
 
