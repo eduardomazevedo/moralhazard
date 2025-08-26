@@ -59,7 +59,6 @@ def _minimize_cost_a_hat(
     w: np.ndarray,
     primitives: Dict[str, Any],
     theta_init: np.ndarray | None = None,
-    last_theta: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
 ) -> tuple[SolveResults, Dict[str, Any], np.ndarray]:
@@ -83,7 +82,7 @@ def _minimize_cost_a_hat(
         Cprime=primitives["Cprime"],
     )
 
-    # Initialization policy with warm-start
+    # Initialization policy
     m = int(cache["R"].shape[1])
     expected_shape = (2 + m,)
     warn_flags: list[str] = []
@@ -96,19 +95,8 @@ def _minimize_cost_a_hat(
                 return ti
             warn_flags.append("theta_init_shape_mismatch_or_nonfinite")
 
-        # 2) class-level last_theta
-        if last_theta is not None:
-            lt = np.asarray(last_theta, dtype=np.float64)
-            if lt.shape == expected_shape and np.all(np.isfinite(lt)):
-                return lt
-            warn_flags.append("class_warm_start_shape_mismatch_or_nonfinite")
-
-        # 3) default
-        vec = np.zeros(expected_shape, dtype=np.float64)
-        vec[0] = 100.0  # lam0 ≥ 0
-        vec[1] = 100.0  # mu0 free (unbounded)
-        # mu_hat already zeros (≥ 0)
-        return vec
+        # 2) default
+        return np.zeros(expected_shape, dtype=np.float64)
 
     x0 = _select_x0()
 
@@ -183,7 +171,6 @@ def _make_expected_wage_fun(
     Ubar: float,
     a_hat: np.ndarray,
     warm_start: bool,
-    last_theta_seed: np.ndarray | None,
 ) -> Callable[[float], float]:
     """
     Factory returning F(a) = E[w(v*(a))] with an optional warm start across calls.
@@ -193,9 +180,7 @@ def _make_expected_wage_fun(
       - .call_count: int
       - .reset(): None
     """
-    last_theta_ref: np.ndarray | None = (
-        np.asarray(last_theta_seed, dtype=np.float64) if last_theta_seed is not None else None
-    )
+    last_theta_ref: np.ndarray | None = None
     call_count = 0
 
     def F(a: float) -> float:
@@ -209,7 +194,6 @@ def _make_expected_wage_fun(
             w=w,
             primitives=primitives,
             theta_init=theta_init,
-            last_theta=last_theta_ref,
         )
         if warm_start:
             last_theta_ref = theta_opt

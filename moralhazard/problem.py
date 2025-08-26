@@ -25,7 +25,6 @@ class MoralHazardProblem:
     Side effects:
       - builds fixed y_grid (length n) and Simpson weights
       - stores primitive callables
-      - initializes class-level warm start (None)
     """
 
     def __init__(self, cfg: dict) -> None:
@@ -76,7 +75,6 @@ class MoralHazardProblem:
 
         self._y_grid = y_grid
         self._w = w
-        self._last_theta: np.ndarray | None = None  # class-level warm start
 
     # ---- Convenience passthroughs / properties --------------------------------
 
@@ -107,9 +105,6 @@ class MoralHazardProblem:
         if a_hat_arr.ndim != 1:
             raise ValueError(f"a_hat must be a 1D array; got shape {a_hat_arr.shape}")
 
-        # Warm-start preference: passed theta_init; else class-level last_theta
-        init = theta_init if theta_init is not None else self._last_theta
-
         results, _cache, theta_opt = _minimize_cost_a_hat(
             float(intended_action),
             float(reservation_utility),
@@ -117,12 +112,9 @@ class MoralHazardProblem:
             y_grid=self._y_grid,
             w=self._w,
             primitives=self._primitives,
-            theta_init=init,
-            last_theta=self._last_theta,
+            theta_init=theta_init,
         )
 
-        # Update class warm-start
-        self._last_theta = np.asarray(theta_opt, dtype=np.float64)
         return results
 
     def expected_wage_fun(
@@ -150,7 +142,6 @@ class MoralHazardProblem:
             Ubar=float(reservation_utility),
             a_hat=a_hat_arr,
             warm_start=bool(warm_start),
-            last_theta_seed=self._last_theta,  # seed with class warm-start (won't be mutated)
         )
         return F
 
