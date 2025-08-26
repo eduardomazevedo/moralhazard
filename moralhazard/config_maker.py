@@ -196,14 +196,25 @@ def make_distribution_cfg(
     if kind == "poisson":
         def f(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             y, a = _asarray(y), _asarray(a)
+            y, a = np.broadcast_arrays(y, a)
+            a = np.maximum(a, 1e-300)
             # PMF: a^y e^{-a} / y!
             # Use exp(log form) for stability; treat non-integer y as 0 by formula anyway
-            return np.exp(y * _safe_log(np.maximum(a, 1e-300)) - a - _lgamma(y + 1.0))
+            # Handle negative y values by setting them to 0
+            out = np.zeros_like(y, dtype=float)
+            mask = (y >= 0) & (y == np.floor(y))  # Only non-negative integers
+            out[mask] = np.exp(y[mask] * _safe_log(a[mask]) - a[mask] - _lgamma(y[mask] + 1.0))
+            return out
 
         def score(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             y, a = _asarray(y), _asarray(a)
+            y, a = np.broadcast_arrays(y, a)
             a = np.maximum(a, 1e-300)
-            return (y - a) / a
+            # Score is only defined for non-negative integer y
+            out = np.zeros_like(y, dtype=float)
+            mask = (y >= 0) & (y == np.floor(y))
+            out[mask] = (y[mask] - a[mask]) / a[mask]
+            return out
 
         return {"f": f, "score": score}
 
@@ -211,15 +222,23 @@ def make_distribution_cfg(
         def f(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             # mean = a, support y >= 0
             y, a = _asarray(y), _asarray(a)
-            out = np.zeros(np.broadcast(y, a).shape)
+            # Ensure proper broadcasting
+            y, a = np.broadcast_arrays(y, a)
+            out = np.zeros_like(y, dtype=float)
             a = np.maximum(a, 1e-300)
             mask = y >= 0
-            out[mask] = (1.0 / a[mask]) * np.exp(-y[mask] / a[mask])
+            # Handle scalar case properly
+            if np.isscalar(a) or a.size == 1:
+                a_val = float(a)
+                out[mask] = (1.0 / a_val) * np.exp(-y[mask] / a_val)
+            else:
+                out[mask] = (1.0 / a[mask]) * np.exp(-y[mask] / a[mask])
             return out
 
         def score(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             y, a = _asarray(y), _asarray(a)
-            a = np.maximum(a, 1e-300)
+            y, a = np.broadcast_arrays(y, a)
+            a = np.maximum(a, 1e-300)  # Avoid divide by zero
             return (y - a) / (a * a)
 
         return {"f": f, "score": score}
@@ -241,15 +260,23 @@ def make_distribution_cfg(
         # mean = a > 1, support y in {1,2,...}
         def f(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             y, a = _asarray(y), _asarray(a)
+            y, a = np.broadcast_arrays(y, a)
             a = np.maximum(a, 1.0 + 1e-12)
-            out = np.zeros(np.broadcast(y, a).shape)
+            out = np.zeros_like(y, dtype=float)
             mask = y >= 1
-            q = 1.0 - 1.0 / a[mask]
-            out[mask] = np.power(q, y[mask] - 1.0) * (1.0 / a[mask])
+            # Handle scalar case properly
+            if np.isscalar(a) or a.size == 1:
+                a_val = float(a)
+                q = 1.0 - 1.0 / a_val
+                out[mask] = np.power(q, y[mask] - 1.0) * (1.0 / a_val)
+            else:
+                q = 1.0 - 1.0 / a[mask]
+                out[mask] = np.power(q, y[mask] - 1.0) * (1.0 / a[mask])
             return out
 
         def score(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             y, a = _asarray(y), _asarray(a)
+            y, a = np.broadcast_arrays(y, a)
             return (y - a) / (a * a - a)
 
         return {"f": f, "score": score}
@@ -282,19 +309,31 @@ def make_distribution_cfg(
 
         def f(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             y, a = _asarray(y), _asarray(a)
-            out = np.zeros(np.broadcast(y, a).shape)
+            y, a = np.broadcast_arrays(y, a)
+            out = np.zeros_like(y, dtype=float)
             a = np.maximum(a, 1e-300)
             mask = y > 0
-            yy = y[mask]; aa = a[mask]
-            log_pdf = ( (n - 1.0) * _safe_log(yy)
-                        - yy / aa
-                        - _lgamma(n)
-                        - n * _safe_log(aa) )
-            out[mask] = np.exp(log_pdf)
+            # Handle scalar case properly
+            if np.isscalar(a) or a.size == 1:
+                a_val = float(a)
+                yy = y[mask]
+                log_pdf = ( (n - 1.0) * _safe_log(yy)
+                            - yy / a_val
+                            - _lgamma(n)
+                            - n * _safe_log(a_val) )
+                out[mask] = np.exp(log_pdf)
+            else:
+                yy = y[mask]; aa = a[mask]
+                log_pdf = ( (n - 1.0) * _safe_log(yy)
+                            - yy / aa
+                            - _lgamma(n)
+                            - n * _safe_log(aa) )
+                out[mask] = np.exp(log_pdf)
             return out
 
         def score(y: ArrayLike, a: ArrayLike) -> ArrayLike:
             y, a = _asarray(y), _asarray(a)
+            y, a = np.broadcast_arrays(y, a)
             a = np.maximum(a, 1e-300)
             return (y - n * a) / (a * a)
 

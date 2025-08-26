@@ -21,3 +21,9 @@ wheels/
 .venv
 
 *DS_Store*
+
+# Images
+*.png
+
+# Output
+examples/output/
