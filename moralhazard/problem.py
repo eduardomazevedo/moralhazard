@@ -19,6 +19,24 @@ class MoralHazardProblem:
     ------------
     mhp = MoralHazardProblem(cfg)
 
+    Required cfg structure:
+      cfg = {
+          "problem_params": {
+              "u": callable,           # utility function (from dollars -> utils, like u(x) = log(x0 + x))
+              "k": callable,           # k function (cost of compensation from utils -> dollars, like k(x) = exp(utils) - x0)
+              "link_function": callable, # link function as in the paper, eg np.log(np.maximum(z, x0))
+              "C": callable,           # cost function, eg C(a) = a^2
+              "Cprime": callable,      # derivative of cost function, eg Cprime(a) = 2*a
+              "f": callable,           # f function, eg f(y|a) = normal(y|a, sigma)
+              "score": callable        # score function, eg score(y|a) = (y - a) / sigma^2
+          },
+          "computational_params": {
+              "y_min": float,          # minimum outcome value
+              "y_max": float,          # maximum outcome value
+              "n": int                 # number of grid points (must be odd)
+          }
+      }
+
     Validates:
       - cfg is a dict with 'problem_params' and 'computational_params'
       - required callables exist and are callable
