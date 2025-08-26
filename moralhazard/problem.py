@@ -159,26 +159,30 @@ class MoralHazardProblem:
         U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the internal Simpson grid.
 
         Inputs:
-          - v : must have shape equal to self.y_grid.shape; coerced to float64
-          - a : scalar or 1D array; coerced to float64
+          - v : must have shape equal to self.y_grid.shape
+          - a : scalar or 1D array
 
         Returns:
-          - scalar if a is scalar; 1D array otherwise (float64)
+          - scalar if a is scalar; 1D array otherwise
         """
-        v_arr = np.asarray(v, dtype=np.float64)
-        expected = self._y_grid.shape
-        if v_arr.shape != expected:
-            raise ValueError(f"v must have shape {expected}; got {v_arr.shape}")
+        # Check input types but don't convert
+        if not isinstance(v, np.ndarray):
+            raise TypeError(f"v must be a numpy array; got {type(v)}")
+        if v.shape != self._y_grid.shape:
+            raise ValueError(f"v must have shape {self._y_grid.shape}; got {v.shape}")
+        
+        if not isinstance(a, (float, int, np.ndarray)):
+            raise TypeError(f"a must be scalar or numpy array; got {type(a)}")
 
         f = self._primitives["f"]
         C = self._primitives["C"]
 
-        a_arr = np.asarray(a, dtype=np.float64)
-        orig_shape = np.shape(a_arr)
-        a_vec = a_arr.ravel()
-        # f(self._y_grid[:, None], a_vec) should return shape (n, m)
-        f_a = np.asarray(f(self._y_grid[:, None], a_vec), dtype=np.float64)  # shape (n, m)
-        integrals = self._w @ (v_arr[:, None] * f_a)  # shape (m,)
-        costs = np.asarray(C(a_vec), dtype=np.float64)  # shape (m,)
-        out = integrals - costs
-        return out.reshape(orig_shape)
+        # Let NumPy broadcasting handle both scalar and array inputs
+        if isinstance(a, np.ndarray) and a.ndim != 1:
+            raise ValueError(f"a must be 1D array; got shape {a.shape}")
+        
+        # f(y_grid[:, None], a) works for both scalar and array a due to broadcasting
+        f_a = f(self._y_grid[:, None], a)
+        integrals = self._w @ (v[:, None] * f_a)  # shape (m,) for array a, scalar for scalar a
+        costs = C(a)  # shape (m,) for array a, scalar for scalar a
+        return integrals - costs
