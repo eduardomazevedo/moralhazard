@@ -111,7 +111,12 @@ class MoralHazardProblem:
             a_hat_arr,
             y_grid=self._y_grid,
             w=self._w,
-            primitives=self._primitives,
+            f=self._primitives["f"],
+            score=self._primitives["score"],
+            C=self._primitives["C"],
+            Cprime=self._primitives["Cprime"],
+            g=self._primitives["g"],
+            k=self._primitives["k"],
             theta_init=theta_init,
         )
 
@@ -138,7 +143,12 @@ class MoralHazardProblem:
         F = _make_expected_wage_fun(
             y_grid=self._y_grid,
             w=self._w,
-            primitives=self._primitives,
+            f=self._primitives["f"],
+            score=self._primitives["score"],
+            C=self._primitives["C"],
+            Cprime=self._primitives["Cprime"],
+            g=self._primitives["g"],
+            k=self._primitives["k"],
             Ubar=float(reservation_utility),
             a_hat=a_hat_arr,
             warm_start=bool(warm_start),

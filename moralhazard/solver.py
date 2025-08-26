@@ -57,7 +57,12 @@ def _minimize_cost_a_hat(
     *,
     y_grid: np.ndarray,
     w: np.ndarray,
-    primitives: Dict[str, Any],
+    f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
+    score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
+    C: Callable[[float | np.ndarray], float | np.ndarray],
+    Cprime: Callable[[float | np.ndarray], float | np.ndarray],
+    g: Callable[[np.ndarray], np.ndarray],
+    k: Callable[[np.ndarray], np.ndarray],
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
@@ -76,10 +81,10 @@ def _minimize_cost_a_hat(
         np.asarray(a_hat, dtype=np.float64),
         np.asarray(y_grid, dtype=np.float64),
         np.asarray(w, dtype=np.float64),
-        f=primitives["f"],
-        score=primitives["score"],
-        C=primitives["C"],
-        Cprime=primitives["Cprime"],
+        f=f,
+        score=score,
+        C=C,
+        Cprime=Cprime,
     )
 
     # Initialization policy
@@ -112,7 +117,7 @@ def _minimize_cost_a_hat(
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": int(maxiter), "ftol": float(ftol)},
-        args=(cache, primitives["g"], primitives["k"], float(Ubar)),
+        args=(cache, g, k, float(Ubar)),
     )
     t1 = time.time()
 
@@ -138,8 +143,8 @@ def _minimize_cost_a_hat(
         raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
 
     # Reconstruct v*(θ) and constraints for reporting
-    v_star = _canonical_contract(theta_opt, cache["s0"], cache["R"], primitives["g"])
-    cons = _constraints(v_star, cache, k=primitives["k"], Ubar=float(Ubar))
+    v_star = _canonical_contract(theta_opt, cache["s0"], cache["R"], g)
+    cons = _constraints(v_star, cache, k=k, Ubar=float(Ubar))
 
     # Multipliers
     lam = float(theta_opt[0])
@@ -167,7 +172,12 @@ def _make_expected_wage_fun(
     *,
     y_grid: np.ndarray,
     w: np.ndarray,
-    primitives: Dict[str, Any],
+    f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
+    score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
+    C: Callable[[float | np.ndarray], float | np.ndarray],
+    Cprime: Callable[[float | np.ndarray], float | np.ndarray],
+    g: Callable[[np.ndarray], np.ndarray],
+    k: Callable[[np.ndarray], np.ndarray],
     Ubar: float,
     a_hat: np.ndarray,
     warm_start: bool,
@@ -192,7 +202,12 @@ def _make_expected_wage_fun(
             np.asarray(a_hat, dtype=np.float64),
             y_grid=y_grid,
             w=w,
-            primitives=primitives,
+            f=f,
+            score=score,
+            C=C,
+            Cprime=Cprime,
+            g=g,
+            k=k,
             theta_init=theta_init,
         )
         if warm_start:
