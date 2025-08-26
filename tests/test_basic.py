@@ -36,6 +36,7 @@ class TestMoralHazardProblem:
                 "score": score,
             },
             "computational_params": {
+                "distribution_type": "continuous",
                 "y_min": 0.0 - 3 * sigma,
                 "y_max": 120.0 + 3 * sigma,
                 "n": 201,  # must be odd
@@ -114,6 +115,7 @@ class TestSolveCostMinimization:
                 "score": score,
             },
             "computational_params": {
+                "distribution_type": "continuous",
                 "y_min": 0.0 - 3 * sigma,
                 "y_max": 120.0 + 3 * sigma,
                 "n": 201,  # must be odd

@@ -31,16 +31,20 @@ class MoralHazardProblem:
               "score": callable        # score function, eg score(y|a) = (y - a) / sigma^2
           },
           "computational_params": {
+              "distribution_type": str, # either "continuous" or "discrete"
               "y_min": float,          # minimum outcome value
               "y_max": float,          # maximum outcome value
-              "n": int                 # number of grid points (must be odd)
+              # For continuous: "n": int (number of grid points, must be odd)
+              # For discrete: "step_size": float (step size that perfectly divides y_max - y_min)
           }
       }
 
     Validates:
       - cfg is a dict with 'problem_params' and 'computational_params'
       - required callables exist and are callable
-      - computational_params must include y_min, y_max, n (odd)
+      - computational_params must include distribution_type, y_min, y_max
+      - For continuous: must include n (odd)
+      - For discrete: must include step_size that perfectly divides y_max - y_min
 
     Side effects:
       - builds fixed y_grid (length n) and Simpson weights
@@ -58,15 +62,12 @@ class MoralHazardProblem:
                 raise KeyError(f"problem_params['{name}'] is required and must be callable")
 
         comp = cfg["computational_params"]
-        for key in ("y_min", "y_max", "n"):
-            if key not in comp:
-                raise KeyError(f"computational_params['{key}'] is required")
+        
+        # Validate that distribution_type is present
+        if "distribution_type" not in comp:
+            raise KeyError("computational_params['distribution_type'] is required")
 
-        y_min = float(comp["y_min"])
-        y_max = float(comp["y_max"])
-        n = int(comp["n"])
-
-        y_grid, w = _make_grid(y_min, y_max, n)
+        y_grid, w = _make_grid(comp["distribution_type"], comp)
 
         # Store primitives with names expected by internals
         self._primitives: Dict[str, Any] = {

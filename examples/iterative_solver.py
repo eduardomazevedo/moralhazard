@@ -25,7 +25,7 @@ def score(y, a):
 
 cfg = {
     "problem_params": {"u": u, "k": k, "link_function": g, "C": C, "Cprime": Cprime, "f": f, "score": score},
-    "computational_params": {"y_min": 0.0 - 3 * sigma, "y_max": a_max + 3 * sigma, "n": 201},
+    "computational_params": {"distribution_type": "continuous", "y_min": 0.0 - 3 * sigma, "y_max": a_max + 3 * sigma, "n": 201},
 }
 
 mhp = MoralHazardProblem(cfg)
