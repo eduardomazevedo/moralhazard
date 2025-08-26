@@ -6,7 +6,8 @@ import numpy as np
 
 from .types import SolveResults
 from .grids import _make_grid
-from .solver import _minimize_cost_a_hat, _make_expected_wage_fun
+from .solver import _minimize_cost_a_hat
+from .utils import _make_expected_wage_fun, _compute_expected_utility
 
 
 class MoralHazardProblem:
@@ -166,24 +167,11 @@ class MoralHazardProblem:
         Returns:
           - scalar if a is scalar; 1D array otherwise
         """
-        # Check input types but don't convert
-        if not isinstance(v, np.ndarray):
-            raise TypeError(f"v must be a numpy array; got {type(v)}")
-        if v.shape != self._y_grid.shape:
-            raise ValueError(f"v must have shape {self._y_grid.shape}; got {v.shape}")
-        
-        if not isinstance(a, (float, int, np.ndarray)):
-            raise TypeError(f"a must be scalar or numpy array; got {type(a)}")
-
-        f = self._primitives["f"]
-        C = self._primitives["C"]
-
-        # Let NumPy broadcasting handle both scalar and array inputs
-        if isinstance(a, np.ndarray) and a.ndim != 1:
-            raise ValueError(f"a must be 1D array; got shape {a.shape}")
-        
-        # f(y_grid[:, None], a) works for both scalar and array a due to broadcasting
-        f_a = f(self._y_grid[:, None], a)
-        integrals = self._w @ (v[:, None] * f_a)  # shape (m,) for array a, scalar for scalar a
-        costs = C(a)  # shape (m,) for array a, scalar for scalar a
-        return integrals - costs
+        return _compute_expected_utility(
+            v=v,
+            a=a,
+            y_grid=self._y_grid,
+            w=self._w,
+            f=self._primitives["f"],
+            C=self._primitives["C"],
+        )
