@@ -51,7 +51,7 @@ def make_utility_cfg(
         # u(x) = log(x + w0)
         def u(x: ArrayLike) -> ArrayLike:
             x = _asarray(x)
-            return np.log(np.maximum(x + w0, 1e-300))
+            return np.log(x + w0)
 
         # k(u) = exp(u) - w0
         def k(uval: ArrayLike) -> ArrayLike:

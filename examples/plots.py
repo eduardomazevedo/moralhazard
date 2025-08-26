@@ -10,7 +10,7 @@ theta = 1.0 / first_best_effort / (first_best_effort + x0)
 
 def u(c): return np.log(x0 + c)
 
-Ubar = float(u(0) - 10)  # same reservation utility as quickstart
+Ubar = float(u(50.0))  # same reservation utility as quickstart
 a_max = 150.0
 
 def k(utils): return np.exp(utils) - x0
@@ -52,7 +52,7 @@ print(f"a* = {a_star_a_hat:.4f}")
 
 # --- iterative solver ---
 print("\n=== iterative solver ===")
-F_iterative = mhp.expected_wage_fun(reservation_utility=Ubar, solver="iterative", a_max=50, warm_start=True, n_a_iterations=3)
+F_iterative = mhp.expected_wage_fun(reservation_utility=Ubar, solver="iterative", a_max=a_max, warm_start=True, n_a_iterations=3)
 Ew_iterative = np.array([F_iterative(float(a)) for a in a_grid])
 payoff_iterative = a_grid - Ew_iterative
 a_star_iterative = float(a_grid[np.argmax(payoff_iterative)])
@@ -62,7 +62,7 @@ res_iterative = mhp.solve_cost_minimization_problem(
     intended_action=a_star_iterative,
     reservation_utility=Ubar,
     solver="iterative",
-    a_max=50,
+    a_max=a_max,
 )
 v_star_iterative = res_iterative.optimal_contract
 print(f"a* = {a_star_iterative:.4f}")

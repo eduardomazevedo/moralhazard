@@ -45,7 +45,13 @@ def _make_cache(
     wf0s0 = wf0 * s0
 
     # Ratio for the global IC constraints: R = 1 - D / f0 (broadcast along columns)
-    R = 1.0 - D / f0[:, None]  # (n, m)
+    # Add numerical safeguards to prevent extreme values that could cause optimization issues
+    f0_safe = np.maximum(f0, 1e-12)  # Ensure f0 is not too small
+    ratio = D / f0_safe[:, None]  # (n, m)
+    
+    # Clip the ratio to prevent extreme values that could destabilize the dual optimization
+    ratio_clipped = np.clip(ratio, -1e6, 1e6)
+    R = 1.0 - ratio_clipped  # (n, m)
 
     # Precompute C-related terms
     C0 = float(C(float(a0)))
