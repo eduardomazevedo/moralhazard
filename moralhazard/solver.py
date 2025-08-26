@@ -66,6 +66,7 @@ def _minimize_cost_a_hat(
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
+    clip_ratio: float = 1e6,
 ) -> tuple[SolveResults, np.ndarray]:
     """
     Solve the dual at fixed action a0 and reservation utility Ubar.
@@ -174,9 +175,6 @@ def _minimize_cost_iterative(
     a0: float,
     Ubar: float,
     *,
-    a_min: float,
-    a_max: float,
-    n_a_grid: int = 100,
     n_a_iterations: int = 1,
     y_grid: np.ndarray,
     w: np.ndarray,
@@ -189,23 +187,22 @@ def _minimize_cost_iterative(
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
+    clip_ratio: float = 1e6,
 ) -> tuple[SolveResults, np.ndarray]:
     """
     Solve the dual iteratively by updating a_hat based on expected utility maximization.
     
     This method iteratively solves the cost minimization problem by:
-    1. Starting with a_current = (a_min + a_max) / 2
+    1. Starting with a_current = 0
     2. Solving with a_hat = [0, a_current]
-    3. Computing expected utility for all actions in the grid
-    4. Updating a_current to maximize U + tie-breaking penalty
-    5. Repeating for n_a_iterations
+    3. Finding the action that maximizes expected utility starting from a = 0
+    4. If the arg max is close to a0, set a_hat = [0, 0]
+    5. If the arg max is far from a0, set a_hat = [0, arg max]
+    6. Repeating for n_a_iterations
     
     Args:
         a0: intended action
         Ubar: reservation utility
-        a_min: minimum action for grid search
-        a_max: maximum action for grid search
-        n_a_grid: number of grid points for action search
         n_a_iterations: number of iterations to perform (after the initial guess)
         y_grid: outcome grid
         w: Simpson weights
@@ -223,13 +220,11 @@ def _minimize_cost_iterative(
         - SolveResults from final iteration
         - theta_opt for warm-starting
     """
-    # Create action grid for utility evaluation
-    a_grid = np.linspace(a_min, a_max, n_a_grid)
-    
-    # Initialize a_current as midpoint
-    a_current = (a_min + a_max) / 2
+    # Initialize a_current as 0 to match the working a_hat mode
+    a_current = 0.0
     
     # Initialize theta for warm-starting across iterations
+    # Note: warm-starting might not work well when a_hat shape changes
     current_theta = theta_init
     
     for iteration in range(n_a_iterations + 1):
@@ -252,6 +247,7 @@ def _minimize_cost_iterative(
             theta_init=current_theta,
             maxiter=maxiter,
             ftol=ftol,
+            clip_ratio=clip_ratio,
         )
         
         # Update theta for next iteration
@@ -259,37 +255,11 @@ def _minimize_cost_iterative(
         
         # Only update a_current if this isn't the last iteration
         if iteration < n_a_iterations:
-            # Compute expected utility for all actions in the grid
             v_optimal = results.optimal_contract
-            U_values = _compute_expected_utility(
-                v=v_optimal,
-                a=a_grid,
-                y_grid=y_grid,
-                w=w,
-                f=f,
-                C=C,
-            )
             
-            # Exclude actions within 1/10 of grid range if n_a_grid >= 20, no exclusion otherwise
-            exclusion_radius = (a_max - a_min) / 10 * (n_a_grid >= 20)
-            exclude_mask = np.abs(a_grid - a0) > exclusion_radius
-            
-            # If all actions are excluded, fall back to no exclusion
-            if not np.any(exclude_mask):
-                exclude_mask = np.ones_like(a_grid, dtype=bool)
-            
-            # Find the action that maximizes utility among non-excluded actions
-            max_idx = np.argmax(U_values[exclude_mask])
-            # Convert back to original grid index
-            max_idx = np.where(exclude_mask)[0][max_idx]
-            grid_opt_a = float(a_grid[max_idx])
-            
-            # Refine with 1D optimization starting from grid optimum
+            # Define negative utility function for maximization
             def neg_utility(a):
                 a_val = float(a)
-                # Add penalty if action is too close to intended action
-                if abs(a_val - a0) <= exclusion_radius:
-                    return 1e6  # Large penalty
                 return -float(_compute_expected_utility(
                     v=v_optimal,
                     a=a_val,
@@ -299,27 +269,40 @@ def _minimize_cost_iterative(
                     C=C,
                 ))
             
-            # Use minimize_scalar with Brent's method for 1D optimization
-            # Brent's method is more robust for 1D optimization than L-BFGS-B
+            # Find the action that maximizes utility starting from a = 0
+            # Use a reasonable upper bound proportional to a0 to prevent numerical instability
+            a_upper = max(0.9 * abs(a0), 0.1)  # Search from 0 to 0.9 * a0, with minimum 0.1
+            
             opt_result = minimize_scalar(
                 neg_utility,
-                bracket=(a_min, grid_opt_a, a_max),  # Provide bracket for Brent's method
+                bracket=(0.0, a_upper),
                 method='brent',
                 options={'xtol': 1e-8}
             )
             
             if opt_result.success:
-                a_current = float(opt_result.x)
+                arg_max_a = float(opt_result.x)
+                
+                # Ensure the result is within the search bounds
+                if arg_max_a > a_upper:
+                    arg_max_a = a_upper
+                
+                # Check if arg max is close to a0
+                # Use a small threshold relative to |a0| or absolute threshold
+                threshold = max(0.1 * abs(a0), 0.01)
+                
+                if abs(arg_max_a - a0) <= threshold:
+                    a_current = 0.0  # Set a_hat = [0] (more efficient than [0, 0])
+                else:
+                    a_current = arg_max_a  # Set a_hat = [0, arg_max]
             else:
-                # Fall back to grid optimum if optimization fails
-                a_current = grid_opt_a
+                # If optimization fails, keep current value
+                pass
     
     # Return the final results with consistent structure
     a_hat = np.array([0.0, a_current])
     
     # Create a new SolveResults object with the final a_hat value
-    # The results object already has the correct a0, Ubar, and other fields
-    # We just need to update the a_hat field to reflect the final value
     final_results = SolveResults(
         a0=results.a0,
         Ubar=results.Ubar,

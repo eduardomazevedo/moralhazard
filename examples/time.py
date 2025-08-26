@@ -61,8 +61,7 @@ for i, (a0, rw) in enumerate(zip(a_list, rw_list), 1):
     _ = mhp.solve_cost_minimization_problem(
         intended_action=float(a0),
         reservation_utility=float(u(rw)),
-        solver="iterative",
-        a_max=a_max,
+        solver="iterative"
     )
     t1 = time.perf_counter()
     dt = t1 - t0

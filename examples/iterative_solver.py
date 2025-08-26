@@ -11,7 +11,7 @@ theta = 1.0 / first_best_effort / (first_best_effort + x0)
 
 def u(c): return np.log(x0 + c)
 
-Ubar = float(u(0) - 10)  # same reservation utility as quickstart
+Ubar = float(u(0)-1)  # same reservation utility as quickstart
 a_max = 150.0
 
 def k(utils): return np.exp(utils) - x0
@@ -51,9 +51,6 @@ for n_iterations in iteration_counts:
     results, theta_opt = _minimize_cost_iterative(
         a0=a0,
         Ubar=Ubar,
-        a_min=a_min,
-        a_max=a_max,
-        n_a_grid=n_a_grid,
         n_a_iterations=n_iterations,
         y_grid=mhp.y_grid,
         w=mhp._w,

@@ -116,10 +116,9 @@ class MoralHazardProblem:
         reservation_utility: float,
         solver: str = "a_hat",
         a_hat: np.ndarray | None = None,
-        a_min: float | None = None,
-        a_max: float | None = None,
         n_a_iterations: int = 1,
         theta_init: np.ndarray | None = None,
+        clip_ratio: float = 1e6,
     ) -> SolveResults:
         """
         Solve the dual for the cost-minimizing contract at a given intended action a0.
@@ -129,10 +128,9 @@ class MoralHazardProblem:
             reservation_utility: The reservation utility Ubar
             solver: Either "a_hat" (default) or "iterative"
             a_hat: Required when solver="a_hat". The action grid for the solve.
-            a_min: Required when solver="iterative". Minimum action for grid search. Defaults to 0.0.
-            a_max: Required when solver="iterative". Maximum action for grid search.
             n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
             theta_init: Optional initial theta for warm-starting.
+            clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
 
         Returns:
             SolveResults object.
@@ -161,20 +159,12 @@ class MoralHazardProblem:
                 g=self._primitives["g"],
                 k=self._primitives["k"],
                 theta_init=theta_init,
+                clip_ratio=clip_ratio,
             )
         else:  # solver == "iterative"
-            if a_max is None:
-                raise ValueError("a_max is required when solver='iterative'")
-            
-            # Set default a_min if not provided
-            if a_min is None:
-                a_min = 0.0
-
             results, theta_opt = _minimize_cost_iterative(
                 a0=float(intended_action),
                 Ubar=float(reservation_utility),
-                a_min=float(a_min),
-                a_max=float(a_max),
                 n_a_iterations=int(n_a_iterations),
                 y_grid=self._y_grid,
                 w=self._w,
@@ -185,6 +175,7 @@ class MoralHazardProblem:
                 g=self._primitives["g"],
                 k=self._primitives["k"],
                 theta_init=theta_init,
+                clip_ratio=clip_ratio,
             )
 
         return results
@@ -194,10 +185,9 @@ class MoralHazardProblem:
         reservation_utility: float,
         solver: str = "a_hat",
         a_hat: np.ndarray | None = None,
-        a_min: float | None = None,
-        a_max: float | None = None,
         n_a_iterations: int = 1,
         warm_start: bool = True,
+        clip_ratio: float = 1e6,
     ) -> "Callable[[float], float]":
         """
         Returns F(a) = E[w(v*(a))] where v*(a) is the cost-minimizing contract
@@ -207,11 +197,10 @@ class MoralHazardProblem:
             reservation_utility: The reservation utility Ubar
             solver: Either "a_hat" (default) or "iterative"
             a_hat: Required when solver="a_hat". The action grid for the solve.
-            a_min: Required when solver="iterative". Minimum action for grid search. Defaults to 0.0.
-            a_max: Required when solver="iterative". Maximum action for grid search.
             n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
             warm_start: When True, successive calls reuse the last θ* found
                        inside the returned function (does NOT mutate class-level warm start).
+            clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
 
         Returns:
             Callable function F(a) that returns the expected wage for action a.
@@ -231,10 +220,9 @@ class MoralHazardProblem:
             Ubar=float(reservation_utility),
             solver=solver,
             a_hat=a_hat,
-            a_min=a_min,
-            a_max=a_max,
-            n_a_iterations=n_a_iterations,
+            n_a_iterations=int(n_a_iterations),
             warm_start=bool(warm_start),
+            clip_ratio=clip_ratio,
         )
 
         return F

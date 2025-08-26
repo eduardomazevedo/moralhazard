@@ -86,7 +86,7 @@ print(f"  Difference in payoff: {abs(payoff_star_grid_a_hat - payoff_star_opt_a_
 # --- grid search over actions (iterative solver) ---
 print(f"\n=== iterative solver ===")
 mhp_grid_iterative = MoralHazardProblem(cfg)
-F_grid_iterative = mhp_grid_iterative.expected_wage_fun(reservation_utility=Ubar, solver="iterative", a_max=a_max, warm_start=True)
+F_grid_iterative = mhp_grid_iterative.expected_wage_fun(reservation_utility=Ubar, solver="iterative", warm_start=True)
 
 t4 = time.perf_counter()
 ews_grid_iterative = np.array([F_grid_iterative(float(a)) for a in a_grid])
@@ -104,7 +104,7 @@ print(f"  time (s) = {t5 - t4:.4f}")
 # --- 1-D optimization on the same interval (iterative solver) ---
 # Create a fresh MoralHazardProblem instance to avoid any warm start bias
 mhp_opt_iterative = MoralHazardProblem(cfg)
-F_opt_iterative = mhp_opt_iterative.expected_wage_fun(reservation_utility=Ubar, solver="iterative", a_max=a_max, warm_start=True)
+F_opt_iterative = mhp_opt_iterative.expected_wage_fun(reservation_utility=Ubar, solver="iterative", warm_start=True)
 
 def neg_objective_iterative(a):
     return -(float(a) - F_opt_iterative(float(a)))

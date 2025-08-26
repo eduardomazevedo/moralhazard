@@ -14,6 +14,7 @@ def _make_cache(
     score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
     C: Callable[[float | np.ndarray], float | np.ndarray],
     Cprime: Callable[[float | np.ndarray], float | np.ndarray],
+    clip_ratio: float = 1e6,
 ) -> Dict[str, Any]:
     """
     Build the *per-solve* precomputations needed by the inner/outer problems.
@@ -50,7 +51,7 @@ def _make_cache(
     ratio = D / f0_safe[:, None]  # (n, m)
     
     # Clip the ratio to prevent extreme values that could destabilize the dual optimization
-    ratio_clipped = np.clip(ratio, -1e6, 1e6)
+    ratio_clipped = np.clip(ratio, -clip_ratio, clip_ratio)
     R = 1.0 - ratio_clipped  # (n, m)
 
     # Precompute C-related terms
