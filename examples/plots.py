@@ -1,141 +1,183 @@
+import os
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from moralhazard import MoralHazardProblem
 
-# ---- primitives (same as prototype Normal model) ----
+# -------------------------------
+# Model primitives (Normal model)
+# -------------------------------
 x0 = 50
 sigma = 10.0
 first_best_effort = 100
 theta = 1.0 / first_best_effort / (first_best_effort + x0)
 
-def u(c): return np.log(x0 + c)
+def u(c): 
+    return np.log(x0 + c)
 
-Ubar = float(u(0.0)-10)  # same reservation utility as quickstart
+Ubar = float(u(0.0) - 10)  # same reservation utility as quickstart
 a_max = 150.0
 
-def k(utils): return np.exp(utils) - x0
-def g(z): return np.log(np.maximum(z, x0))
-def C(a): return theta * a ** 2 / 2
-def Cprime(a): return theta * a
+def k(utils): 
+    return np.exp(utils) - x0
+
+def g(z): 
+    return np.log(np.maximum(z, x0))
+
+def C(a): 
+    return theta * a ** 2 / 2
+
+def Cprime(a): 
+    return theta * a
+
 def f(y, a):
     return (1 / (np.sqrt(2 * np.pi) * sigma)) * np.exp(-((y - a) ** 2) / (2 * sigma ** 2))
+
 def score(y, a):
     return (y - a) / (sigma ** 2)
 
 cfg = {
-    "problem_params": {"u": u, "k": k, "link_function": g, "C": C, "Cprime": Cprime, "f": f, "score": score},
-    "computational_params": {"distribution_type": "continuous", "y_min": 0.0 - 3 * sigma, "y_max": a_max + 3 * sigma, "n": 201},
+    "problem_params": {
+        "u": u,
+        "k": k,
+        "link_function": g,
+        "C": C,
+        "Cprime": Cprime,
+        "f": f,
+        "score": score,
+    },
+    "computational_params": {
+        "distribution_type": "continuous",
+        "y_min": 0.0 - 3 * sigma,
+        "y_max": a_max + 3 * sigma,
+        "n": 201,
+    },
 }
 
 mhp = MoralHazardProblem(cfg)
 
-# --- shared inputs ---
-a_hat = np.zeros(2)
+# Principal revenue: original payoff was a - E[w], so revenue(a) = a
+revenue = lambda a: float(a)
+
+# Grids & shared objects
 a_grid = np.linspace(0.0, a_max, 121)
+a_hat = np.zeros(2)  # only needed for the a_hat solver
+y = mhp.y_grid
 
-# --- a_hat solver ---
-print("=== a_hat solver ===")
-F_a_hat = mhp.expected_wage_fun(reservation_utility=Ubar, solver="a_hat", a_hat=a_hat, warm_start=True)
-Ew_a_hat = np.array([F_a_hat(float(a)) for a in a_grid])
-payoff_a_hat = a_grid - Ew_a_hat
-a_star_a_hat = float(a_grid[np.argmax(payoff_a_hat)])
+# ---------------------------------------
+# Solve principal's outer problem (a*)
+# ---------------------------------------
 
-# Solve once at the optimal action to get v*(·)
-res_a_hat = mhp.solve_cost_minimization_problem(
-    intended_action=a_star_a_hat,
+# a_hat solver
+res_a_hat = mhp.solve_principal_problem(
+    revenue_function=revenue,
     reservation_utility=Ubar,
+    a_min=0.0,
+    a_max=a_max,
+    a_init=first_best_effort,
     solver="a_hat",
     a_hat=a_hat,
 )
+a_star_a_hat = float(res_a_hat.optimal_action)
 v_star_a_hat = res_a_hat.optimal_contract
-print(f"a* = {a_star_a_hat:.4f}")
 
-# --- iterative solver ---
-print("\n=== iterative solver ===")
-F_iterative = mhp.expected_wage_fun(reservation_utility=Ubar, solver="iterative", warm_start=True, n_a_iterations=3)
-Ew_iterative = np.array([F_iterative(float(a)) for a in a_grid])
-payoff_iterative = a_grid - Ew_iterative
-a_star_iterative = float(a_grid[np.argmax(payoff_iterative)])
-
-# Solve once at the optimal action to get v*(·)
-res_iterative = mhp.solve_cost_minimization_problem(
-    intended_action=a_star_iterative,
+# iterative solver
+res_iter = mhp.solve_principal_problem(
+    revenue_function=revenue,
     reservation_utility=Ubar,
+    a_min=0.0,
+    a_max=a_max,
+    a_init=first_best_effort,
     solver="iterative",
-    clip_ratio=1
+    n_a_iterations=3,
+    clip_ratio=1,
 )
-v_star_iterative = res_iterative.optimal_contract
-print(f"a* = {a_star_iterative:.4f}")
+a_star_iter = float(res_iter.optimal_action)
+v_star_iter = res_iter.optimal_contract
 
-# Debug: Show the a_hat values to verify they're within bounds
-print(f"a0 = {a_star_iterative:.4f}")
-print(f"0.9 * a0 = {0.9 * a_star_iterative:.4f}")
-print(f"a_hat values: {res_iterative.a_hat}")
-print(f"All a_hat values within 0.9*a0 bounds: {np.all(np.abs(res_iterative.a_hat) <= 0.9 * a_star_iterative)}")
+# Expected wage curves and payoff curves for plotting
+F_a_hat = mhp.expected_wage_fun(
+    reservation_utility=Ubar, solver="a_hat", a_hat=a_hat, warm_start=True
+)
+Ew_a_hat = np.array([F_a_hat(float(a)) for a in a_grid])
+payoff_a_hat = a_grid - Ew_a_hat
 
+F_iter = mhp.expected_wage_fun(
+    reservation_utility=Ubar, solver="iterative", warm_start=True, n_a_iterations=3, clip_ratio=1
+)
+Ew_iter = np.array([F_iter(float(a)) for a in a_grid])
+payoff_iter = a_grid - Ew_iter
 
-y = mhp.y_grid
+# -----------------
+# Output directory
+# -----------------
+out_dir = Path("examples/output/plots")
+out_dir.mkdir(parents=True, exist_ok=True)
 
-# --- Plots ---
-
-# 1) Optimal wage schedules comparison
+# ---------------
+# Plot 1: Wages
+# ---------------
 plt.figure(figsize=(10, 6))
 plt.plot(y, mhp.k(v_star_a_hat), linewidth=2, label=f'a_hat solver (a* = {a_star_a_hat:.2f})', color='blue')
-plt.plot(y, mhp.k(v_star_iterative), linewidth=2, label=f'iterative solver (a* = {a_star_iterative:.2f})', color='red', linestyle='--')
+plt.plot(y, mhp.k(v_star_iter), linewidth=2, label=f'iterative solver (a* = {a_star_iter:.2f})', color='red', linestyle='--')
 plt.xlabel("Outcome y")
 plt.ylabel("Wage k(v*(y))")
 plt.title("Optimal wage schedules comparison")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
+plt.savefig(out_dir / "wages.png", dpi=200, bbox_inches="tight")
+plt.close()
 
-# 2) Utility functions comparison
+# -------------------
+# Plot 2: Utilities
+# -------------------
 plt.figure(figsize=(10, 6))
 Ua_a_hat = mhp.U(v_star_a_hat, a_grid)
-Ua_iterative = mhp.U(v_star_iterative, a_grid)
+Ua_iter = mhp.U(v_star_iter, a_grid)
 plt.plot(a_grid, Ua_a_hat, linewidth=2, label=f'a_hat solver (a* = {a_star_a_hat:.2f})', color='blue')
-plt.plot(a_grid, Ua_iterative, linewidth=2, label=f'iterative solver (a* = {a_star_iterative:.2f})', color='red', linestyle='--')
+plt.plot(a_grid, Ua_iter, linewidth=2, label=f'iterative solver (a* = {a_star_iter:.2f})', color='red', linestyle='--')
 plt.axvline(a_star_a_hat, linestyle=":", color='blue', alpha=0.7, label=f'a_hat a* = {a_star_a_hat:.2f}')
-plt.axvline(a_star_iterative, linestyle=":", color='red', alpha=0.7, label=f'iterative a* = {a_star_iterative:.2f}')
+plt.axvline(a_star_iter, linestyle=":", color='red', alpha=0.7, label=f'iterative a* = {a_star_iter:.2f}')
 plt.xlabel("Action a")
 plt.ylabel("U(a)")
 plt.title("U(a) under optimal contracts comparison")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
+plt.savefig(out_dir / "utilities.png", dpi=200, bbox_inches="tight")
+plt.close()
 
-# 3) Expected wages comparison
+# -------------------------
+# Plot 3: Expected wages
+# -------------------------
 plt.figure(figsize=(10, 6))
 plt.plot(a_grid, Ew_a_hat, linewidth=2, label=f'a_hat solver (a* = {a_star_a_hat:.2f})', color='blue')
-plt.plot(a_grid, Ew_iterative, linewidth=2, label=f'iterative solver (a* = {a_star_iterative:.2f})', color='red', linestyle='--')
+plt.plot(a_grid, Ew_iter, linewidth=2, label=f'iterative solver (a* = {a_star_iter:.2f})', color='red', linestyle='--')
 plt.axvline(a_star_a_hat, linestyle=":", color='blue', alpha=0.7, label=f'a_hat a* = {a_star_a_hat:.2f}')
-plt.axvline(a_star_iterative, linestyle=":", color='red', alpha=0.7, label=f'iterative a* = {a_star_iterative:.2f}')
+plt.axvline(a_star_iter, linestyle=":", color='red', alpha=0.7, label=f'iterative a* = {a_star_iter:.2f}')
 plt.xlabel("Action a")
 plt.ylabel("Expected wage E[w]")
 plt.title("Expected wages comparison")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
+plt.savefig(out_dir / "expected_wages.png", dpi=200, bbox_inches="tight")
+plt.close()
 
-# 4) Principal's payoff comparison
+# ------------------------------
+# Plot 4: Principal's payoff
+# ------------------------------
 plt.figure(figsize=(10, 6))
 plt.plot(a_grid, payoff_a_hat, linewidth=2, label=f'a_hat solver (a* = {a_star_a_hat:.2f})', color='blue')
-plt.plot(a_grid, payoff_iterative, linewidth=2, label=f'iterative solver (a* = {a_star_iterative:.2f})', color='red', linestyle='--')
+plt.plot(a_grid, payoff_iter, linewidth=2, label=f'iterative solver (a* = {a_star_iter:.2f})', color='red', linestyle='--')
 plt.axvline(a_star_a_hat, linestyle=":", color='blue', alpha=0.7, label=f'a_hat a* = {a_star_a_hat:.2f}')
-plt.axvline(a_star_iterative, linestyle=":", color='red', alpha=0.7, label=f'iterative a* = {a_star_iterative:.2f}')
+plt.axvline(a_star_iter, linestyle=":", color='red', alpha=0.7, label=f'iterative a* = {a_star_iter:.2f}')
 plt.xlabel("Action a")
 plt.ylabel("Principal payoff: a - E[w]")
 plt.title("Principal's payoff comparison")
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
-
-print(f"\n=== Summary ===")
-print(f"a_hat solver a*: {a_star_a_hat:.4f}")
-print(f"iterative solver a*: {a_star_iterative:.4f}")
-print(f"Difference in a*: {abs(a_star_a_hat - a_star_iterative):.6f}")
-print(f"a_hat solver max payoff: {np.max(payoff_a_hat):.6f}")
-print(f"iterative solver max payoff: {np.max(payoff_iterative):.6f}")
-print(f"Difference in max payoff: {abs(np.max(payoff_a_hat) - np.max(payoff_iterative)):.6f}")
-
-plt.show()
+plt.savefig(out_dir / "payoff.png", dpi=200, bbox_inches="tight")
+plt.close()
