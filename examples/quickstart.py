@@ -85,7 +85,7 @@ principal_results = mhp.solve_principal_problem(
     revenue_function=lambda aa: aa,
     reservation_utility=reservation_utility,
     a_min=0.0,
-    a_max=180.0,
+    a_max=130.0,
     a_init=80.0,
     a_hat=np.array([0.0]),
 )
@@ -100,3 +100,7 @@ print(f"  Inner multipliers at a*: {principal_results.multipliers}")
 y_grid = mhp.y_grid
 v = principal_results.optimal_contract            # utils on the grid
 wage = mhp.k(v)                         # dollars on the grid
+
+#
+a_grid = np.linspace(0, 140, 100)
+U_grid = mhp.U(v, a_grid)
