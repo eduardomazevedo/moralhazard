@@ -55,8 +55,10 @@ specs_to_do.append({
     "name": "Exponential",
     "dist_cfg": make_distribution_cfg("exponential"),
     "a0": 80.0,
+    "a_initial": 1.0,
+    "a_search_lb": 1.0,
     "C": C, "Cprime": Cprime,
-    "y_min": -30.0, "y_max": 150.0, "n": 201,
+    "y_min": -30.0, "y_max": 300.0, "n": 201,
 })
 
 # Poisson (discrete)
@@ -153,6 +155,8 @@ def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_ut
         reservation_utility=reservation_utility,
         a_hat=np.array([0.0, 0.0]),
         solver="iterative",
+        a_initial=spec.get("a_initial", 0.0),
+        a_search_lb=spec.get("a_search_lb", -np.inf),
     )
 
     print(f"{dist_name} - Multipliers found:")
