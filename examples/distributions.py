@@ -59,6 +59,7 @@ specs_to_do.append({
     "a_search_lb": 1.0,
     "C": C, "Cprime": Cprime,
     "y_min": -30.0, "y_max": 300.0, "n": 201,
+    "plot_a_min": 1.0, "plot_a_max": 110.0,
 })
 
 # Poisson (discrete)
@@ -68,6 +69,52 @@ specs_to_do.append({
     "a0": 80.0,  # mean
     "C": C, "Cprime": Cprime,
     "y_min": 0.0, "y_max": 120.0, "step_size": 1.0,
+})
+
+# Bernoulli (discrete)
+specs_to_do.append({
+    "name": "Bernoulli",
+    "dist_cfg": make_distribution_cfg("bernoulli"),
+    "a0": 0.8,  # probability
+    "C": C, "Cprime": Cprime,
+    # grid overrides (optional)
+    "y_min": 0.0, "y_max": 1.0, "step_size": 1.0,
+    # scale cost by 100 so magnitudes are comparable to other distributions
+    "scale_cost_by": 100.0,
+})
+
+# Geometric (discrete)
+specs_to_do.append({
+    "name": "Geometric",
+    "dist_cfg": make_distribution_cfg("geometric"),
+    "a0": 80.0,             # mean = a
+    "a_initial": 1.1,       # keep >1
+    "a_search_lb": 1.1,     # keep >1
+    "C": C, "Cprime": Cprime,
+    "y_min": 1.0, "y_max": 300.0, "step_size": 1.0,   # longer right tail than Poisson
+    "plot_a_min": 1.1, "plot_a_max": 110.0,           # match others’ a plotting window
+})
+
+# Gamma (continuous)
+specs_to_do.append({
+    "name": "Gamma",
+    "dist_cfg": make_distribution_cfg("gamma", n=3.0),  # shape parameter
+    "a0": 80.0 / 3.0,  # scale parameter
+    "a_initial": 1.0,
+    "a_search_lb": 1.0,
+    "C": C, "Cprime": Cprime,
+    "y_min": 0.0, "y_max": 200.0, "n": 201,
+    "scale_cost_by": 3.0,
+    "plot_a_min": 1.0, "plot_a_max": 110.0 / 3.0,
+})
+
+# Student's t (continuous)
+specs_to_do.append({
+    "name": "Student_t",
+    "dist_cfg": make_distribution_cfg("student_t", nu=5.0, sigma=sigma),
+    "a0": 80.0,  # location parameter
+    "C": C, "Cprime": Cprime,
+    "y_min": -50.0, "y_max": 200.0, "n": 201,
 })
 
 # =============================================================
@@ -183,15 +230,27 @@ def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_ut
 
     # 2) Agent's utility vs action (not y-based; still a continuous sweep over a)
     ax = axes[0, 1]
+    
+    # Use custom plotting ranges if specified, otherwise use defaults
+    plot_a_min = spec.get("plot_a_min")
+    plot_a_max = spec.get("plot_a_max")
+    
     if name_lower in ["binomial", "bernoulli"]:
-        a_grid = np.linspace(0.1, 0.9, 100)
+        if plot_a_min is None:
+            plot_a_min, plot_a_max = 0.1, 0.9
+        a_grid = np.linspace(plot_a_min, plot_a_max, 100)
         ax.set_xlabel('Action a (probability)')
     elif name_lower == "geometric":
-        a_grid = np.linspace(1.1, 10.0, 100)
+        if plot_a_min is None:
+            plot_a_min, plot_a_max = 1.1, 10.0
+        a_grid = np.linspace(plot_a_min, plot_a_max, 100)
         ax.set_xlabel('Action a (mean)')
     else:
-        a_grid = np.linspace(0.0, 110.0, 100)
+        if plot_a_min is None:
+            plot_a_min, plot_a_max = 0.0, 110.0
+        a_grid = np.linspace(plot_a_min, plot_a_max, 100)
         ax.set_xlabel('Action a')
+    
     Ua = mhp.U(v, a_grid)
     ax.plot(a_grid, Ua)
     ax.set_ylabel('U(a)')

@@ -168,30 +168,6 @@ def make_distribution_cfg(
 
         return {"f": f, "score": score}
 
-    if kind == "lognormal":
-        sigma = float(params.get("sigma", None) or 1.0)
-        if sigma <= 0:
-            raise ValueError("lognormal requires sigma > 0.")
-        inv_s2 = 1.0 / (sigma * sigma)
-        root = np.sqrt(2.0 * np.pi) * sigma
-
-        def f(y: ArrayLike, a: ArrayLike) -> ArrayLike:
-            y, a = _asarray(y), _asarray(a)
-            out = np.zeros(np.broadcast(y, a).shape)
-            mask = y > 0
-            yy = y[mask]
-            aa = a[mask]
-            out[mask] = (1.0 / (yy * root)) * np.exp(-0.5 * inv_s2 * (np.log(yy) - aa) ** 2)
-            return out
-
-        def score(y: ArrayLike, a: ArrayLike) -> ArrayLike:
-            y, a = _asarray(y), _asarray(a)
-            out = np.zeros(np.broadcast(y, a).shape)
-            mask = y > 0
-            out[mask] = (np.log(y[mask]) - a[mask]) * inv_s2
-            return out
-
-        return {"f": f, "score": score}
 
     if kind == "poisson":
         def f(y: ArrayLike, a: ArrayLike) -> ArrayLike:
