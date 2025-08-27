@@ -55,8 +55,8 @@ specs_to_do.append({
     "name": "Exponential",
     "dist_cfg": make_distribution_cfg("exponential"),
     "a0": 80.0,
-    "a_initial": 1.0,
-    "a_search_lb": 1.0,
+    "a_ic_initial": 1.0,
+    "a_ic_lb": 1.0,
     "C": C, "Cprime": Cprime,
     "y_min": -30.0, "y_max": 300.0, "n": 201,
     "plot_a_min": 1.0, "plot_a_max": 110.0,
@@ -88,8 +88,8 @@ specs_to_do.append({
     "name": "Geometric",
     "dist_cfg": make_distribution_cfg("geometric"),
     "a0": 80.0,             # mean = a
-    "a_initial": 1.1,       # keep >1
-    "a_search_lb": 1.1,     # keep >1
+    "a_ic_initial": 1.1,       # keep >1
+    "a_ic_lb": 1.1,     # keep >1
     "C": C, "Cprime": Cprime,
     "y_min": 1.0, "y_max": 300.0, "step_size": 1.0,   # longer right tail than Poisson
     "plot_a_min": 1.1, "plot_a_max": 110.0,           # match others’ a plotting window
@@ -100,8 +100,8 @@ specs_to_do.append({
     "name": "Gamma",
     "dist_cfg": make_distribution_cfg("gamma", n=3.0),  # shape parameter
     "a0": 80.0 / 3.0,  # scale parameter
-    "a_initial": 1.0,
-    "a_search_lb": 1.0,
+    "a_ic_initial": 1.0,
+    "a_ic_lb": 1.0,
     "C": C, "Cprime": Cprime,
     "y_min": 0.0, "y_max": 200.0, "n": 201,
     "scale_cost_by": 3.0,
@@ -202,8 +202,8 @@ def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_ut
         reservation_utility=reservation_utility,
         a_hat=np.array([0.0, 0.0]),
         solver="iterative",
-        a_initial=spec.get("a_initial", 0.0),
-        a_search_lb=spec.get("a_search_lb", -np.inf),
+        a_ic_initial=spec.get("a_ic_initial", 0.0),
+        a_ic_lb=spec.get("a_ic_lb", -np.inf),
     )
 
     print(f"{dist_name} - Multipliers found:")

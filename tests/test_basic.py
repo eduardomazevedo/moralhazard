@@ -187,8 +187,8 @@ class TestSolveCostMinimization:
             intended_action=80.0,
             reservation_utility=np.log(100),  # u(50)
             solver="iterative",
-            a_min=0.0,
-            a_max=120.0,
+            a_ic_lb=0.0,
+            a_ic_ub=120.0,
             n_a_iterations=1,
         )
         
@@ -223,16 +223,26 @@ class TestSolveCostMinimization:
                 # a_hat not provided
             )
     
-    def test_a_max_required_for_iterative_solver(self, mhp):
-        """Test that a_max is required when using iterative solver."""
-        with pytest.raises(ValueError, match="a_max is required when solver='iterative'"):
-            mhp.solve_cost_minimization_problem(
-                intended_action=80.0,
-                reservation_utility=np.log(100),
-                solver="iterative",
-                a_min=0.0,
-                # a_max not provided
-            )
+    def test_iterative_solver_with_default_bounds(self, mhp):
+        """Test that iterative solver works with default search bounds."""
+        results = mhp.solve_cost_minimization_problem(
+            intended_action=80.0,
+            reservation_utility=np.log(100),
+            solver="iterative",
+            n_a_iterations=1,
+            # a_ic_lb and a_ic_ub use defaults (-inf, inf)
+        )
+        
+        # Verify results structure
+        assert isinstance(results, SolveResults)
+        assert results.a0 == 80.0
+        assert results.Ubar == np.log(100)
+        assert results.a_hat.shape == (2,)  # iterative solver always uses 2 elements
+        assert results.optimal_contract.shape == (201,)  # matches y_grid length
+        assert isinstance(results.expected_wage, float)
+        assert isinstance(results.multipliers, dict)
+        assert isinstance(results.constraints, dict)
+        assert isinstance(results.solver_state, dict)
     
     def test_a_hat_must_be_1d_array(self, mhp):
         """Test that a_hat must be a 1D array."""

@@ -193,4 +193,17 @@ def _compute_expected_utility(
     f_a = f(y_grid[:, None], a)
     integrals = w @ (v[:, None] * f_a)  # shape (m,) for array a, scalar for scalar a
     costs = C(a)  # shape (m,) for array a, scalar for scalar a
-    return integrals - costs
+    result = integrals - costs
+    
+    # Ensure consistent return types: scalar for scalar input, array for array input
+    if isinstance(a, (float, int)):
+        # For scalar input, ensure we return a Python scalar, not a 0-dim array
+        if isinstance(result, np.ndarray):
+            if result.size == 1:
+                return float(result.item())
+            else:
+                raise ValueError(f"Expected scalar result for scalar input, got array with {result.size} elements")
+        return float(result)
+    else:
+        # For array input, return numpy array
+        return np.asarray(result, dtype=np.float64)
