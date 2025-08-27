@@ -18,6 +18,8 @@ def f(y, a):
 def score(y, a):
     return (y - a) / (sigma ** 2)
 
+reservation_utility = u(10)
+
 # ---- configuration ----
 cfg = {
     "problem_params": {
@@ -32,7 +34,7 @@ cfg = {
     "computational_params": {
         "distribution_type": "continuous",
         "y_min": 0.0   - 3 * sigma,
-        "y_max": 120.0 + 3 * sigma,
+        "y_max": 180.0 + 3 * sigma,
         "n": 201,  # must be odd
     },
 }
@@ -41,16 +43,33 @@ cfg = {
 mhp = MoralHazardProblem(cfg)
 results = mhp.solve_cost_minimization_problem(
     intended_action=80.0,
-    reservation_utility=u(50),
-    a_hat=np.array([0.0, 0.0]),
+    reservation_utility=reservation_utility,
+    a_hat=np.array([0.0]),
 )
 
+print("Cost minimization problem results:")
 print("Multipliers found:")
 print(results.multipliers)
+
+
+# ---- principals problem ----
+principal_results = mhp.solve_principal_problem(
+    revenue_function=lambda aa: aa,
+    reservation_utility=reservation_utility,
+    a_min=0.0,
+    a_max=180.0,
+    a_init=80.0,
+    a_hat=np.array([0.0]),
+)
+
+print("\nPrincipal problem results:")
+print(f"  Profit: {principal_results.profit:.3f}")
+print(f"  Optimal action (a*): {principal_results.optimal_action:.3f}")
+print(f"  Inner multipliers at a*: {principal_results.multipliers}")
 
 # ---- plots ----
 
 # 1) Wage schedule k(v*(y)) vs y
 y_grid = mhp.y_grid
-v = results.optimal_contract            # utils on the grid
+v = principal_results.optimal_contract            # utils on the grid
 wage = mhp.k(v)                         # dollars on the grid

@@ -4,11 +4,13 @@ from __future__ import annotations
 from typing import Dict, Any, Callable
 import numpy as np
 
-from .types import SolveResults
+from .types import SolveResults, PrincipalSolveResults
 from .grids import _make_grid
 from .solver import _minimize_cost_a_hat, _minimize_cost_iterative
-from .utils import _make_expected_wage_fun
+from .utils import _make_expected_wage_fun, _solve_principal_problem
 from .core import _compute_expected_utility
+
+
 
 
 class MoralHazardProblem:
@@ -263,4 +265,90 @@ class MoralHazardProblem:
             w=self._w,
             f=self._primitives["f"],
             C=self._primitives["C"],
+        )
+
+    def solve_principal_problem(
+        self,
+        revenue_function: "Callable[[float], float]",
+        reservation_utility: float,
+        a_min: float,
+        a_max: float,
+        a_init: float,
+        *,
+        # options forwarded to expected_wage_fun(...)
+        solver: str = "a_hat",
+        a_hat: np.ndarray | None = None,
+        n_a_iterations: int = 1,
+        warm_start: bool = True,
+        clip_ratio: float = 1e6,
+        a_ic_lb: float = -np.inf,
+        a_ic_ub: float = np.inf,
+        a_ic_initial: float = 0.0,
+        # options forwarded to the outer line search
+        minimize_scalar_options: dict | None = None,
+        # options forwarded to the inner cost-minimization solver call
+        theta_init: np.ndarray | None = None,
+    ) -> PrincipalSolveResults:
+        """
+        Public API: principal's outer problem via line search over actions.
+
+        1) Build expected_wage_fun(a) for the given Ubar and solver params.
+        2) Line-search a ∈ [a_min, a_max] to maximize revenue(a) - E[w(a)].
+        3) Solve the inner cost-minimization problem at the optimal action.
+        4) Return a PrincipalSolveResults bundle.
+        """
+        # 1) Construct E[w(a)] using the class' primitives
+        Ew = self.expected_wage_fun(
+            reservation_utility=reservation_utility,
+            solver=solver,
+            a_hat=a_hat,
+            n_a_iterations=n_a_iterations,
+            warm_start=warm_start,
+            clip_ratio=clip_ratio,
+            a_ic_lb=a_ic_lb,
+            a_ic_ub=a_ic_ub,
+            a_ic_initial=a_ic_initial,
+        )
+
+        # 2) Outer line search
+        outer = _solve_principal_problem(
+            revenue_function=revenue_function,
+            expected_wage_fun=Ew,
+            a_min=float(a_min),
+            a_max=float(a_max),
+            a_init=float(a_init),
+            minimize_scalar_options=minimize_scalar_options,
+        )
+        a_star = float(outer["optimal_action"])
+        profit = float(outer["profit"])
+
+        # 3) Inner solve at a*
+        inner: SolveResults = self.solve_cost_minimization_problem(
+            intended_action=a_star,
+            reservation_utility=float(reservation_utility),
+            solver=solver,
+            a_hat=a_hat,
+            n_a_iterations=n_a_iterations,
+            theta_init=theta_init,
+            clip_ratio=clip_ratio,
+            a_ic_lb=a_ic_lb,
+            a_ic_ub=a_ic_ub,
+            a_ic_initial=a_ic_initial,
+        )
+
+        # 4) Pack results
+        return PrincipalSolveResults(
+            a_min=float(a_min),
+            a_max=float(a_max),
+            a_init=float(a_init),
+            revenue_function=revenue_function,
+            Ubar=float(reservation_utility),
+            profit=profit,
+            optimal_action=a_star,
+            a_hat=inner.a_hat,
+            optimal_contract=inner.optimal_contract,
+            multipliers=inner.multipliers,
+            constraints=inner.constraints,
+            solver_state_outer=outer["outer_solver_state"],
+            solver_state_inner=inner.solver_state,
         )
