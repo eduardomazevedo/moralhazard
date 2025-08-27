@@ -1,4 +1,4 @@
-# examples/timing_10_runs.py
+# Timing cost minimization problem solvers (a_hat and iterative)
 import time
 import numpy as np
 from moralhazard import MoralHazardProblem

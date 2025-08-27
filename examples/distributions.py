@@ -1,12 +1,14 @@
-# examples/distribution_plots_refactor.py
-
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from pathlib import Path
 
 from moralhazard import MoralHazardProblem
 from moralhazard.config_maker import make_utility_cfg, make_distribution_cfg
+
+# =============================================================
+# CONFIG — centralize output directory
+# =============================================================
+OUTPUT_DIR = os.path.join("examples", "output", "distributions")
 
 # =============================================================
 # PART 1 — Build a plain list of specs to run (append items)
@@ -24,11 +26,12 @@ theta = 1.0 / first_best_effort / (first_best_effort + x0)
 utility_cfg = make_utility_cfg("log", w0=x0)
 reservation_utility = utility_cfg["u"](0.0) - 1.0
 
-# default cost; override per-spec if needed
+# default cost; override per-spec if you like
 C  = lambda a: theta * a ** 2 / 2
 Cprime = lambda a: theta * a
 
-# ----- Append specs -----
+# ----- Append specs (procedural, nothing fancy) -----
+# Each spec sets: name, dist_cfg, a0, cost functions, and optional y-grid overrides.
 
 # Gaussian (continuous)
 specs_to_do.append({
@@ -36,16 +39,19 @@ specs_to_do.append({
     "dist_cfg": make_distribution_cfg("gaussian", sigma=sigma),
     "a0": 80.0,
     "C": C, "Cprime": Cprime,
-    "y_min": -30.0, "y_max": 150.0, "n": 201,
+    # grid overrides (optional)
+    "y_min": -30.0, "y_max": 150.0, "n": 201,  # n must be odd for continuous
 })
 
 # Binomial (discrete)
 specs_to_do.append({
     "name": "Binomial",
     "dist_cfg": make_distribution_cfg("binomial", n=100),
-    "a0": 0.8,
+    "a0": 0.8,  # probability
     "C": C, "Cprime": Cprime,
+    # grid overrides (optional)
     "y_min": 0.0, "y_max": 100.0, "step_size": 1.0,
+    # optional: scale cost by n so magnitudes are comparable (set to None to skip)
     "scale_cost_by": 100.0,
 })
 
@@ -65,7 +71,7 @@ specs_to_do.append({
 specs_to_do.append({
     "name": "Poisson",
     "dist_cfg": make_distribution_cfg("poisson"),
-    "a0": 80.0,
+    "a0": 80.0,  # mean
     "C": C, "Cprime": Cprime,
     "y_min": 0.0, "y_max": 120.0, "step_size": 1.0,
 })
@@ -74,9 +80,11 @@ specs_to_do.append({
 specs_to_do.append({
     "name": "Bernoulli",
     "dist_cfg": make_distribution_cfg("bernoulli"),
-    "a0": 0.8,
+    "a0": 0.8,  # probability
     "C": C, "Cprime": Cprime,
+    # grid overrides (optional)
     "y_min": 0.0, "y_max": 1.0, "step_size": 1.0,
+    # scale cost by 100 so magnitudes are comparable to other distributions
     "scale_cost_by": 100.0,
 })
 
@@ -84,19 +92,19 @@ specs_to_do.append({
 specs_to_do.append({
     "name": "Geometric",
     "dist_cfg": make_distribution_cfg("geometric"),
-    "a0": 80.0,
-    "a_ic_initial": 1.1,
-    "a_ic_lb": 1.1,
+    "a0": 80.0,             # mean = a
+    "a_ic_initial": 1.1,    # keep >1
+    "a_ic_lb": 1.1,         # keep >1
     "C": C, "Cprime": Cprime,
-    "y_min": 1.0, "y_max": 300.0, "step_size": 1.0,
-    "plot_a_min": 1.1, "plot_a_max": 110.0 / 3.0,
+    "y_min": 1.0, "y_max": 300.0, "step_size": 1.0,   # longer right tail than Poisson
+    "plot_a_min": 1.1, "plot_a_max": 110.0,           # match others’ a plotting window
 })
 
 # Gamma (continuous)
 specs_to_do.append({
     "name": "Gamma",
-    "dist_cfg": make_distribution_cfg("gamma", n=3.0),
-    "a0": 80.0 / 3.0,
+    "dist_cfg": make_distribution_cfg("gamma", n=3.0),  # shape parameter
+    "a0": 80.0 / 3.0,  # scale parameter
     "a_ic_initial": 1.0,
     "a_ic_lb": 1.0,
     "C": C, "Cprime": Cprime,
@@ -109,28 +117,35 @@ specs_to_do.append({
 specs_to_do.append({
     "name": "Student_t",
     "dist_cfg": make_distribution_cfg("student_t", nu=5.0, sigma=sigma),
-    "a0": 80.0,
+    "a0": 80.0,  # location parameter
     "C": C, "Cprime": Cprime,
     "y_min": -50.0, "y_max": 200.0, "n": 201,
 })
 
 # =============================================================
-# PART 2 — Function to solve + plot
+# PART 2 — Single function that does all the work + plotting
 # =============================================================
 
-def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_utility: float, output_dir: str):
+def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_utility: float, output_dir: str = OUTPUT_DIR):
+    """Solve the problem for one spec and save the 2x2 plot.
+
+    Required in `spec`:
+        name (str), dist_cfg (dict from make_distribution_cfg), a0 (float), C, Cprime.
+    Optional in `spec`:
+        y_min, y_max, n (for continuous) OR step_size (for discrete), scale_cost_by (float).
+    """
     dist_name = spec["name"]
     dist_cfg = spec["dist_cfg"]
     a0 = spec["a0"]
 
-    # primitives
+    # pull functions from configs
     f = dist_cfg["f"]
     score = dist_cfg["score"]
     u = utility_cfg["u"]
     k = utility_cfg["k"]
     g = utility_cfg["link_function"]
 
-    # cost (maybe scaled)
+    # costs (optionally scaled for probability models)
     C = spec["C"]
     Cprime = spec["Cprime"]
     scale = spec.get("scale_cost_by")
@@ -139,24 +154,42 @@ def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_ut
         C = lambda a, _C=C_orig, s=scale: _C(s * a)
         Cprime = lambda a, _Cp=Cp_orig, s=scale: s * _Cp(s * a)
 
-    # continuous vs discrete grids
+    # auto-detect discrete vs continuous by distribution name (for labels only)
     name_lower = dist_name.lower()
-    if name_lower in ["binomial", "poisson", "bernoulli", "geometric"]:
+    is_discrete = name_lower in ["binomial", "poisson", "bernoulli", "geometric"]
+
+    # default grids (used to build the problem). Plotting will ALWAYS use mhp.y_grid.
+    if is_discrete:
+        if name_lower == "binomial":
+            y_min, y_max, step = 0.0, float(dist_cfg.get("n", 100)), 1.0
+        elif name_lower == "bernoulli":
+            y_min, y_max, step = 0.0, 1.0, 1.0
+        elif name_lower == "geometric":
+            y_min, y_max, step = 0.0, 50.0, 1.0
+        else:  # poisson
+            y_min, y_max, step = 0.0, 120.0, 1.0
+        # apply overrides
+        y_min = spec.get("y_min", y_min)
+        y_max = spec.get("y_max", y_max)
+        step = spec.get("step_size", step)
         computational_params = {
             "distribution_type": "discrete",
-            "y_min": float(spec.get("y_min", 0.0)),
-            "y_max": float(spec.get("y_max", 100.0)),
-            "step_size": float(spec.get("step_size", 1.0)),
+            "y_min": float(y_min),
+            "y_max": float(y_max),
+            "step_size": float(step),
         }
     else:
-        n = int(spec.get("n", 201))
-        if n % 2 == 0:
+        y_min, y_max, n = -30.0, 150.0, 201
+        y_min = spec.get("y_min", y_min)
+        y_max = spec.get("y_max", y_max)
+        n = int(spec.get("n", n))
+        if n % 2 == 0:  # enforce odd n if needed
             n += 1
         computational_params = {
             "distribution_type": "continuous",
-            "y_min": float(spec.get("y_min", -30.0)),
-            "y_max": float(spec.get("y_max", 150.0)),
-            "n": n,
+            "y_min": float(y_min),
+            "y_max": float(y_max),
+            "n": int(n),
         }
 
     cfg = {
@@ -167,112 +200,115 @@ def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_ut
         "computational_params": computational_params,
     }
 
+    # ---- solve ----
     mhp = MoralHazardProblem(cfg)
-
-    # solve principal problem
-    revenue = lambda a: float(a)
-    res = mhp.solve_principal_problem(
-        revenue_function=revenue,
+    results = mhp.solve_cost_minimization_problem(
+        intended_action=a0,
         reservation_utility=reservation_utility,
-        a_min=spec.get("a_ic_lb", 0.0),
-        a_max=spec.get("y_max", 150.0),
-        a_init=a0,
+        a_hat=np.array([0.0, 0.0]),
         solver="iterative",
         a_ic_initial=spec.get("a_ic_initial", 0.0),
         a_ic_lb=spec.get("a_ic_lb", -np.inf),
     )
-    a_star = float(res.optimal_action)
-    v_star = res.optimal_contract
 
-    # for plots
-    y = mhp.y_grid
-    wage = mhp.k(v_star)
+    print(f"{dist_name} - Multipliers found:")
+    print(results.multipliers)
 
-    # action grid for utility plotting
-    name_lower = dist_name.lower()
-    if name_lower == "binomial":
-        a_grid = np.linspace(spec.get("plot_a_min", 0.1), spec.get("plot_a_max", 0.9), 100)
-    elif name_lower == "bernoulli":
-        a_grid = np.linspace(spec.get("plot_a_min", 0.0), spec.get("plot_a_max", 1.0), 2)
-    elif name_lower == "geometric":
-        a_grid = np.linspace(spec.get("plot_a_min", 1.1), spec.get("plot_a_max", 10.0), 100)
-    else:
-        a_grid = np.linspace(spec.get("plot_a_min", 0.0), spec.get("plot_a_max", 110.0), 100)
+    # ---- PLOTTING (STRICTLY use mhp.y_grid) ----
+    y = mhp.y_grid  # single source of truth for x-axis in y-based plots
+    v = results.optimal_contract
+    wage = mhp.k(v)
 
-    Ua = mhp.U(v_star, a_grid)
-    f_vals = f(y, a0)
-    score_vals = score(y, a0)
-
-    # --- plotting ---
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle(f'{dist_name} Distribution Analysis\nOptimal a* = {a_star:.2f}, Profit = {float(res.profit):.4f}',
-                 fontsize=16, fontweight='bold')
+    fig.suptitle(f'{dist_name} Distribution Analysis', fontsize=16, fontweight='bold')
 
-    # 1) Wage schedule
+    # 1) Wage schedule (values aligned to y)
     ax = axes[0, 0]
-    if name_lower in ["binomial", "poisson", "bernoulli", "geometric"]:
+    if is_discrete:
         ax.scatter(y, wage, s=30, alpha=0.8, edgecolors='black', linewidth=0.5)
     else:
         ax.plot(y, wage)
-    ax.set_xlabel("Output y")
-    ax.set_ylabel("Wage k(v*(y))")
-    ax.set_title("Optimal Wage Schedule")
+    ax.set_xlabel('Output y')
+    ax.set_ylabel('Wage k(v*(y))')
+    ax.set_title('Optimal Wage Schedule')
     ax.grid(True, alpha=0.3)
 
-    # 2) Utility vs action
+    # 2) Agent's utility vs action (not y-based; still a continuous sweep over a)
     ax = axes[0, 1]
+    
+    # Use custom plotting ranges if specified, otherwise use defaults
+    plot_a_min = spec.get("plot_a_min")
+    plot_a_max = spec.get("plot_a_max")
+    
+    if name_lower in ["binomial", "bernoulli"]:
+        if plot_a_min is None:
+            plot_a_min, plot_a_max = 0.1, 0.9
+        a_grid = np.linspace(plot_a_min, plot_a_max, 100)
+        ax.set_xlabel('Action a (probability)')
+    elif name_lower == "geometric":
+        if plot_a_min is None:
+            plot_a_min, plot_a_max = 1.1, 10.0
+        a_grid = np.linspace(plot_a_min, plot_a_max, 100)
+        ax.set_xlabel('Action a (mean)')
+    else:
+        if plot_a_min is None:
+            plot_a_min, plot_a_max = 0.0, 110.0
+        a_grid = np.linspace(plot_a_min, plot_a_max, 100)
+        ax.set_xlabel('Action a')
+    
+    Ua = mhp.U(v, a_grid)
     ax.plot(a_grid, Ua)
-    ax.axvline(a_star, linestyle=":", color="red", alpha=0.7, label=f"Optimal a* = {a_star:.2f}")
-    ax.set_xlabel("Action a")
-    ax.set_ylabel("U(a)")
-    ax.set_title("Agent Utility from Optimal Contract")
-    ax.legend()
+    ax.set_ylabel('U(a)')
+    ax.set_title('Agent Utility from Optimal Contract')
     ax.grid(True, alpha=0.3)
 
-    # 3) Distribution f(y|a0)
+    # 3) f(y|a0) sampled EXACTLY on mhp.y_grid
     ax = axes[1, 0]
-    if name_lower in ["binomial", "poisson", "bernoulli", "geometric"]:
-        ax.bar(y, f_vals, alpha=0.7)
+    f_vals = f(y, a0)
+    if is_discrete:
+        ax.scatter(y, f_vals, s=30, alpha=0.8, edgecolors='black', linewidth=0.5)
     else:
         ax.plot(y, f_vals)
-    ax.set_xlabel("Output y")
-    ax.set_ylabel("f(y|a)")
-    ax.set_title(f"Distribution f(y|a={a0:.1f})")
+    ax.set_xlabel('Output y')
+    ax.set_ylabel('f(y|a)')
+    ax.set_title(f'Distribution f(y|a={a0:.1f})')
     ax.grid(True, alpha=0.3)
 
-    # 4) Score function
+    # 4) score(y, a0) sampled EXACTLY on mhp.y_grid
     ax = axes[1, 1]
-    if name_lower in ["binomial", "poisson", "bernoulli", "geometric"]:
+    score_vals = score(y, a0)
+    if is_discrete:
         ax.scatter(y, score_vals, s=30, alpha=0.8, edgecolors='black', linewidth=0.5)
     else:
         ax.plot(y, score_vals)
-    ax.set_xlabel("Output y")
-    ax.set_ylabel("score(y, a)")
-    ax.set_title(f"Score Function score(y, a={a0:.1f})")
+    ax.set_xlabel('Output y')
+    ax.set_ylabel('score(y, a)')
+    ax.set_title(f'Score Function score(y, a={a0:.1f})')
     ax.grid(True, alpha=0.3)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-
     # save
-    out_dir = Path(output_dir) / "distributions"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{dist_name.lower()}.png"
-    filepath = out_dir / filename
-    plt.savefig(filepath, dpi=300, bbox_inches="tight")
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f"distributions-{dist_name.lower()}.png"
+    filepath = os.path.join(output_dir, filename)
+    plt.savefig(filepath, dpi=300, bbox_inches='tight')
     plt.close()
+    print(f"Saved plot to: {filepath}")
 
-    return mhp, res
+    return mhp, results, y, f_vals
 
 
 # =============================================================
-# PART 3 — Run all specs and save plots
+# Run all specs
 # =============================================================
-
 if __name__ == "__main__":
-    out_dir = "output/distributions"
-    os.makedirs(out_dir, exist_ok=True)
-
+    print("Solving and plotting distributions...")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     for spec in specs_to_do:
-        solve_and_plot_distribution(spec=spec, utility_cfg=utility_cfg, reservation_utility=reservation_utility, output_dir=out_dir)
-
-    print("All distribution plots saved under output/distributions/")
+        print(f"Processing {spec['name']}...")
+        solve_and_plot_distribution(
+            spec=spec,
+            utility_cfg=utility_cfg,
+            reservation_utility=reservation_utility,
+            output_dir=OUTPUT_DIR
+        )
+    print(f"All done. Plots saved under {OUTPUT_DIR}/")

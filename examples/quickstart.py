@@ -1,3 +1,4 @@
+# Quickstart example
 import numpy as np
 import matplotlib.pyplot as plt
 from moralhazard import MoralHazardProblem
@@ -68,7 +69,6 @@ print(f"  Optimal action (a*): {principal_results.optimal_action:.3f}")
 print(f"  Inner multipliers at a*: {principal_results.multipliers}")
 
 # ---- plots ----
-
 # 1) Wage schedule k(v*(y)) vs y
 y_grid = mhp.y_grid
 v = principal_results.optimal_contract            # utils on the grid
