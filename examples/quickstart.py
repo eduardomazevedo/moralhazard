@@ -2,6 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from moralhazard import MoralHazardProblem
+from moralhazard.config_maker import make_utility_cfg, make_distribution_cfg
 
 # ---- primitives (same as prototype Normal model) ----
 x0 = 50
@@ -19,7 +20,7 @@ def f(y, a):
 def score(y, a):
     return (y - a) / (sigma ** 2)
 
-reservation_utility = u(10)
+reservation_utility = u(0)
 
 # ---- configuration ----
 cfg = {
@@ -40,6 +41,23 @@ cfg = {
     },
 }
 
+# ---- alternative: using config maker ----
+# Create utility functions (log utility with baseline wealth x0)
+utility_cfg = make_utility_cfg("log", w0=x0)
+# Create distribution functions (gaussian with sigma)
+dist_cfg = make_distribution_cfg("gaussian", sigma=sigma)
+
+# Alternative configuration using config maker
+cfg_alt = {
+    "problem_params": {
+        **utility_cfg,  # u, k, link_function
+        **dist_cfg,     # f, score
+        "C": C,
+        "Cprime": Cprime,
+    },
+    "computational_params": cfg["computational_params"],
+}
+
 # ---- solve once ----
 mhp = MoralHazardProblem(cfg)
 results = mhp.solve_cost_minimization_problem(
@@ -52,6 +70,15 @@ print("Cost minimization problem results:")
 print("Multipliers found:")
 print(results.multipliers)
 
+# Verify both configs produce same results
+mhp_alt = MoralHazardProblem(cfg_alt)
+results_alt = mhp_alt.solve_cost_minimization_problem(
+    intended_action=80.0,
+    reservation_utility=reservation_utility,
+    a_hat=np.array([0.0]),
+)
+
+print(f"Config maker produces same multipliers: {np.allclose(results.multipliers['lam'], results_alt.multipliers['lam']) and np.allclose(results.multipliers['mu'], results_alt.multipliers['mu'])}")
 
 # ---- principals problem ----
 principal_results = mhp.solve_principal_problem(
