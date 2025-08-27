@@ -188,14 +188,17 @@ def _minimize_cost_iterative(
     maxiter: int = 1000,
     ftol: float = 1e-8,
     clip_ratio: float = 1e6,
+    a_search_lb: float = -np.inf,
+    a_search_ub: float = np.inf,
+    a_initial: float = 0.0,
 ) -> tuple[SolveResults, np.ndarray]:
     """
     Solve the dual iteratively by updating a_hat based on expected utility maximization.
     
     This method iteratively solves the cost minimization problem by:
-    1. Starting with a_current = 0
+    1. Starting with a_current = a_initial
     2. Solving with a_hat = [0, a_current]
-    3. Finding the action that maximizes expected utility starting from a = 0
+    3. Finding the action that maximizes expected utility within the specified bounds
     4. If the arg max is close to a0, set a_hat = [0, 0]
     5. If the arg max is far from a0, set a_hat = [0, arg max]
     6. Repeating for n_a_iterations
@@ -215,13 +218,16 @@ def _minimize_cost_iterative(
         theta_init: optional initial theta for warm-starting
         maxiter: maximum iterations for optimizer
         ftol: function tolerance for optimizer
+        a_search_lb: lower bound for action search (default: -infinity)
+        a_search_ub: upper bound for action search (default: infinity)
+        a_initial: initial action value to start search from (default: 0.0)
         
     Returns:
         - SolveResults from final iteration
         - theta_opt for warm-starting
     """
-    # Initialize a_current as 0 to match the working a_hat mode
-    a_current = 0.0
+    # Initialize a_current with the provided initial value
+    a_current = a_initial
     
     # Initialize theta for warm-starting across iterations
     # Note: warm-starting might not work well when a_hat shape changes
@@ -269,24 +275,26 @@ def _minimize_cost_iterative(
                     C=C,
                 ))
             
-            # Find the action that maximizes utility starting from a = 0
-            # Use a reasonable upper bound proportional to a0 to prevent numerical instability
-            a_upper = max(0.9 * abs(a0), 0.1)  # Search from 0 to 0.9 * a0, with minimum 0.1
+            # Find the action that maximizes utility within the specified bounds
+            # Use the provided bounds, but ensure they're reasonable
+            a_lower = max(a_search_lb, -0.9 * abs(a0))  # Reasonable lower bound
+            a_upper = min(a_search_ub, 0.9 * abs(a0))    # Reasonable upper bound
+            
+            # Ensure we have a valid bracket for the optimizer
+            if a_lower >= a_upper:
+                a_lower = a_upper - 0.1  # Ensure lower < upper
             
             opt_result = minimize_scalar(
                 neg_utility,
-                bracket=(0.0, a_upper),
-                method='brent',
-                options={'xtol': 1e-8}
+                bounds=(a_lower, a_upper),
+                method='bounded',
+                options={'xatol': 1e-8}
             )
             
             if opt_result.success:
                 arg_max_a = float(opt_result.x)
                 
-                # Ensure the result is within the search bounds
-                if arg_max_a > a_upper:
-                    arg_max_a = a_upper
-                
+                # The optimizer now respects bounds, so arg_max_a is already within constraints
                 # Check if arg max is close to a0
                 # Use a small threshold relative to |a0| or absolute threshold
                 threshold = max(0.1 * abs(a0), 0.01)

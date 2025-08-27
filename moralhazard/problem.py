@@ -119,6 +119,9 @@ class MoralHazardProblem:
         n_a_iterations: int = 1,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
+        a_search_lb: float = -np.inf,
+        a_search_ub: float = np.inf,
+        a_initial: float = 0.0,
     ) -> SolveResults:
         """
         Solve the dual for the cost-minimizing contract at a given intended action a0.
@@ -131,6 +134,9 @@ class MoralHazardProblem:
             n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
             theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
+            a_search_lb: Lower bound for action search when using iterative solver (default: -infinity)
+            a_search_ub: Upper bound for action search when using iterative solver (default: infinity)
+            a_initial: Initial action value to start search from when using iterative solver (default: 0.0)
 
         Returns:
             SolveResults object.
@@ -176,6 +182,9 @@ class MoralHazardProblem:
                 k=self._primitives["k"],
                 theta_init=theta_init,
                 clip_ratio=clip_ratio,
+                a_search_lb=a_search_lb,
+                a_search_ub=a_search_ub,
+                a_initial=a_initial,
             )
 
         return results
@@ -188,6 +197,9 @@ class MoralHazardProblem:
         n_a_iterations: int = 1,
         warm_start: bool = True,
         clip_ratio: float = 1e6,
+        a_search_lb: float = -np.inf,
+        a_search_ub: float = np.inf,
+        a_initial: float = 0.0,
     ) -> "Callable[[float], float]":
         """
         Returns F(a) = E[w(v*(a))] where v*(a) is the cost-minimizing contract
@@ -201,6 +213,9 @@ class MoralHazardProblem:
             warm_start: When True, successive calls reuse the last θ* found
                        inside the returned function (does NOT mutate class-level warm start).
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
+            a_search_lb: Lower bound for action search when using iterative solver (default: -infinity)
+            a_search_ub: Upper bound for action search when using iterative solver (default: infinity)
+            a_initial: Initial action value to start search from when using iterative solver (default: 0.0)
 
         Returns:
             Callable function F(a) that returns the expected wage for action a.
@@ -223,6 +238,9 @@ class MoralHazardProblem:
             n_a_iterations=int(n_a_iterations),
             warm_start=bool(warm_start),
             clip_ratio=clip_ratio,
+            a_search_lb=a_search_lb,
+            a_search_ub=a_search_ub,
+            a_initial=a_initial,
         )
 
         return F

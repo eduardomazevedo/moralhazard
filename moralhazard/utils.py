@@ -22,6 +22,9 @@ def _make_expected_wage_fun(
     n_a_iterations: int = 1,
     warm_start: bool = True,
     clip_ratio: float = 1e6,
+    a_search_lb: float = -np.inf,
+    a_search_ub: float = np.inf,
+    a_initial: float = 0.0,
 ) -> Callable[[float], float]:
     """
     Factory returning F(a) = E[w(v*(a))] with an optional warm start across calls.
@@ -73,6 +76,9 @@ def _make_expected_wage_fun(
                 k=k,
                 theta_init=theta_init,
                 clip_ratio=clip_ratio,
+                a_search_lb=a_search_lb,
+                a_search_ub=a_search_ub,
+                a_initial=a_initial,
             )
         
         if warm_start:

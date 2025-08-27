@@ -10,7 +10,7 @@ theta = 1.0 / first_best_effort / (first_best_effort + x0)
 
 def u(c): return np.log(x0 + c)
 
-Ubar = float(u(0.0)-1)  # same reservation utility as quickstart
+Ubar = float(u(0.0)-10)  # same reservation utility as quickstart
 a_max = 150.0
 
 def k(utils): return np.exp(utils) - x0
@@ -62,9 +62,16 @@ res_iterative = mhp.solve_cost_minimization_problem(
     intended_action=a_star_iterative,
     reservation_utility=Ubar,
     solver="iterative",
+    clip_ratio=1
 )
 v_star_iterative = res_iterative.optimal_contract
 print(f"a* = {a_star_iterative:.4f}")
+
+# Debug: Show the a_hat values to verify they're within bounds
+print(f"a0 = {a_star_iterative:.4f}")
+print(f"0.9 * a0 = {0.9 * a_star_iterative:.4f}")
+print(f"a_hat values: {res_iterative.a_hat}")
+print(f"All a_hat values within 0.9*a0 bounds: {np.all(np.abs(res_iterative.a_hat) <= 0.9 * a_star_iterative)}")
 
 
 y = mhp.y_grid
