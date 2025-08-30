@@ -5,19 +5,22 @@ from moralhazard import MoralHazardProblem
 from moralhazard.config_maker import make_utility_cfg, make_distribution_cfg
 
 # Basics
-S = 1e1
-ln_sigma = 2.3
-w0 = 1
-agent_max_impact = np.log(10) # At most multiplies the firm value by this
+S_tilde = 1e3
+ln_sigma = 0.94 # 0.94 vs 2.3 for 10 years of public company vs vc
+S = S_tilde * np.exp(ln_sigma**2/2)
+w0 = 50
 
-expected_firm_value = lambda a: S * np.exp(ln_sigma**2/2) * np.exp(agent_max_impact * a)
-expected_revenue = lambda a: expected_firm_value(a) - expected_firm_value(0)
-median_firm_value = lambda a: S * np.exp(agent_max_impact * a)
-
+a_left = -1
+kappa = 0.1
 
 # Cost function
-c = lambda a: - np.log(1 - a)
-mc = lambda a: 1 / (1 - a)
+def c(a):
+    return kappa * (np.log(1 - np.exp(a_left)) - np.log(1 - np.exp(a)))
+
+def mc(a):
+    return kappa * (np.exp(a) / (1 - np.exp(a)))
+
+revenue_function = lambda a: S * np.exp(a)
 
 # Create cfgs
 utility_cfg = make_utility_cfg("log", w0=w0)
@@ -26,7 +29,7 @@ dist_cfg = make_distribution_cfg("gaussian", sigma=ln_sigma)
 
 # Reservation utility
 u = utility_cfg["u"]
-reservation_utility = u(w0)
+reservation_utility = u(w0) # So agent could get another w0 besides her baseline consumption working somewhere else.
 
 cfg = {
     "problem_params": {
@@ -37,8 +40,8 @@ cfg = {
     },
     "computational_params": {
         "distribution_type": "continuous",
-        "y_min": - 4 * ln_sigma,
-        "y_max": agent_max_impact + 4 * ln_sigma,
+        "y_min": a_left- 4 * ln_sigma,
+        "y_max": 4 * ln_sigma,
         "n": 201,  # must be odd
     }
 }
@@ -46,13 +49,13 @@ cfg = {
 mhp = MoralHazardProblem(cfg)
 
 result_principal = mhp.solve_principal_problem(
-    revenue_function=expected_revenue,
+    revenue_function=revenue_function,
     reservation_utility=reservation_utility,
     solver="a_hat",
-    a_hat=[0.0],
-    a_min=0.0,
-    a_max=0.7,
-    a_init=0.0
+    a_hat=[a_left],
+    a_min=a_left,
+    a_max=0,
+    a_init=a_left
 )
 
 print(result_principal)
@@ -66,7 +69,7 @@ v = result_principal.optimal_contract
 w = mhp.k(v)
 density = mhp._primitives["f"](mhp.y_grid, result_principal.optimal_action)
 
-id_mid = abs(mhp.y_grid - agent_max_impact * a0) < 3 * ln_sigma
+id_mid = abs(mhp.y_grid - a0) < 2 * ln_sigma
 y_mid = mhp.y_grid[id_mid]
 firm_val = S * np.exp(y_mid)
 
@@ -93,7 +96,7 @@ plt.xscale('log')
 plt.title("Founder share vs firm value")
 plt.show()
 
-a_grid = np.linspace(0, 1, 100)
+a_grid = np.linspace(a_left, -0.1, 100)
 plt.plot(a_grid, mhp.U(v, a_grid))
 plt.title("Utility vs action")
 plt.show()
