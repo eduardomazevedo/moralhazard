@@ -1,6 +1,6 @@
 # Tests for MoralHazard Package
 
-This directory contains tests for the `moralhazard` package.
+This directory contains tests for the `moralhazard` package (AI generated).
 
 ## Test Structure
 

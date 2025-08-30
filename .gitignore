@@ -27,3 +27,7 @@ wheels/
 
 # Output
 examples/output/
+
+# Tests
+/.pytest_cache/
+/.coverage
