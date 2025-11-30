@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Optional, Dict, Any, TYPE_CHECKING
 import numpy as np
 
-from .solver import _minimize_cost_a_hat, _minimize_cost_iterative
+from .solver import _maximize_lagrange_dual
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem

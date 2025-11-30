@@ -4,9 +4,9 @@ from __future__ import annotations
 from typing import Dict, Any, Callable
 import numpy as np
 
-from .types import SolveResults, PrincipalSolveResults
+from .types import CostMinimizationResults, PrincipalSolveResults
 from .grids import _make_grid
-from .solver import _minimize_cost_a_hat, _minimize_cost_iterative, _minimize_cost_internal
+from .solver import _minimize_cost_internal
 from .utils import _make_expected_wage_fun, _solve_principal_problem
 from .core import _compute_expected_utility
 
@@ -144,7 +144,7 @@ class MoralHazardProblem:
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
         a_always_check_global_ic: np.ndarray = np.array([0.0])
-    ) -> SolveResults:
+    ) -> CostMinimizationResults:
         """
         Solve the dual for the cost-minimizing contract at a given intended action a0.
 
@@ -163,7 +163,7 @@ class MoralHazardProblem:
             SolveResults object.
         """
 
-        results, _ = _minimize_cost_internal(
+        results = _minimize_cost_internal(
             intended_action,
             reservation_utility,
             problem=self,
@@ -316,7 +316,7 @@ class MoralHazardProblem:
         # Entry point: convert theta_init if provided
         theta_init_arr = np.asarray(theta_init, dtype=np.float64) if theta_init is not None else None
 
-        inner: SolveResults = self.solve_cost_minimization_problem(
+        inner: CostMinimizationResults = self.solve_cost_minimization_problem(
             intended_action=a_star,
             reservation_utility=reservation_utility,
             n_a_iterations=n_a_iterations,

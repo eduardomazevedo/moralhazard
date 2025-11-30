@@ -1,12 +1,33 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+from pprint import pformat
 import numpy as np
 from typing import Callable, Optional, Dict, Any
 
 
+# ----------------------------------------------------------------------
+# Utility: recursively convert NumPy scalars to Python scalars for repr
+# ----------------------------------------------------------------------
+def _clean(obj):
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _clean(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        t = type(obj)
+        return t(_clean(x) for x in obj)
+    return obj
+
+
+# ----------------------------------------------------------------------
+# Dataclasses
+# ----------------------------------------------------------------------
+
 @dataclass(frozen=True)
-class SolveResults:
+class DualMaximizerResults:
     """
     Immutable container for a single dual solve at fixed a0.
 
@@ -29,6 +50,35 @@ class SolveResults:
     multipliers: dict
     constraints: dict
     solver_state: dict
+
+    def __repr__(self):
+        data = _clean(asdict(self))
+        return f"{self.__class__.__name__}(\n{pformat(data, indent=4)}\n)"
+
+
+@dataclass(frozen=True)
+class CostMinimizationResults:
+    """
+    Immutable container for the cost minimization results. Same as for the ahat solver, but with iterations information.
+    """
+    a0: float
+    Ubar: float
+    a_hat: np.ndarray
+    optimal_contract: np.ndarray
+    expected_wage: float
+    multipliers: dict
+    constraints: dict
+    solver_state: dict
+    n_outer_iterations: int
+    a_hat_trace: list[np.ndarray]
+    multipliers_trace: list[dict]
+    global_ic_violation_trace: list[float]
+    best_action_distance_trace: list[float]
+    best_action_trace: list[float]
+
+    def __repr__(self):
+        data = _clean(asdict(self))
+        return f"{self.__class__.__name__}(\n{pformat(data, indent=4)}\n)"
 
 
 @dataclass(frozen=True)
@@ -61,3 +111,7 @@ class PrincipalSolveResults:
     constraints: Dict[str, Any]
     solver_state_outer: Dict[str, Any]
     solver_state_inner: Dict[str, Any]
+
+    def __repr__(self):
+        data = _clean(asdict(self))
+        return f"{self.__class__.__name__}(\n{pformat(data, indent=4)}\n)"

@@ -20,7 +20,7 @@ def f(y, a):
 def score(y, a):
     return (y - a) / (sigma ** 2)
 
-reservation_utility = u(0)
+reservation_utility = u(0) - 5.0
 
 # ---- configuration ----
 cfg = {
@@ -66,9 +66,11 @@ results = mhp.solve_cost_minimization_problem(
     a_ic_lb=0.0,
     a_ic_ub=100.0,
     n_a_grid_points=10,
-    n_a_iterations=1
+    n_a_iterations=10
 )
 
 print("Cost minimization problem results:")
+print(results)
 print("Multipliers found:")
 print(results.multipliers)
+

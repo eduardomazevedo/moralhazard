@@ -8,7 +8,7 @@ This package surfaces:
 Spec: "Moral Hazard — Minimal Interface (v0)". See docs. 
 """
 
-from .types import SolveResults
+from .types import CostMinimizationResults
 from .problem import MoralHazardProblem
 
-__all__ = ["MoralHazardProblem", "SolveResults"]
+__all__ = ["MoralHazardProblem", "CostMinimizationResults"]

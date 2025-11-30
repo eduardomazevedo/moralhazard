@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, Any, Callable, Tuple, TYPE_CHECKING
+from typing import Dict, Any, Tuple, TYPE_CHECKING
 import numpy as np
-from scipy.optimize import minimize, minimize_scalar
+from scipy.optimize import minimize
 
-from .types import SolveResults
-from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility, _agent_best_action
+from .types import DualMaximizerResults, CostMinimizationResults
+from .core import _make_cache, _canonical_contract, _constraints, _agent_best_action
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
@@ -99,7 +99,7 @@ def _dual_value_and_grad(
     return -g_dual, -grad  # minimizer expects -g and -∇g
 
 
-def _minimize_cost_a_hat(
+def _maximize_lagrange_dual(
     a0: float,
     Ubar: float,
     a_hat: np.ndarray,
@@ -111,10 +111,11 @@ def _minimize_cost_a_hat(
     clip_ratio: float = 1e6,
 ) -> tuple[SolveResults, np.ndarray]:
     """
-    Solve the dual at fixed action a0 and reservation utility Ubar.
+    Maximizes the Lagrange dual given a0, Ubar, and a_hat.
+    Typically used as an internal solver.
 
     Returns:
-      - SolveResults
+      - DualMaximizerResults
       - theta_opt for warm-starting
     """
     # Build precomputed cache (no primitives or raw params stored)
@@ -197,7 +198,7 @@ def _minimize_cost_a_hat(
     mu = mu_opt
     mu_hat = mu_hat_opt
 
-    results = SolveResults(
+    results = DualMaximizerResults(
         a0=a0,
         Ubar=Ubar,
         a_hat=a_hat,
@@ -229,14 +230,21 @@ def _minimize_cost_internal(
     a_ic_ub: float = np.inf,
     n_a_grid_points: int = 10,
     a_always_check_global_ic: np.ndarray = np.array([0.0])
-) -> tuple[SolveResults, np.ndarray]:
+) -> CostMinimizationResults:
     """
-    Internal method to solve cost minimization problem. Calls minimize_cost_a_hat.
+    Internal method to solve cost minimization problem. Calls maximize_lagrange_dual as needed.
     First solves relaxed problem (a_hat = []).
-    Then finds largest global IC violation, and iteratively adds biggest constraint violation to a_hat.
+    Then finds largest global IC violation, and iteratively adds biggest constraint violation to a_hat. Warm starts contract from the relaxed optimal.
     """
+    # Initialize traces
+    a_hat_trace: list[np.ndarray] = []
+    multipliers_trace: list[dict] = []
+    global_ic_violation_trace: list[float] = []
+    best_action_distance_trace: list[float] = []
+    best_action_trace: list[float] = []
+    
     # Solve relaxed problem
-    results, theta_optimal = _minimize_cost_a_hat(
+    results_dual, theta_optimal = _maximize_lagrange_dual(
         a0=intended_action,
         Ubar=reservation_utility,
         a_hat=np.array([], dtype=np.float64),
@@ -245,21 +253,34 @@ def _minimize_cost_internal(
         clip_ratio=clip_ratio,
     )
     theta_relaxed_optimal = theta_optimal
+    
+    # Add initial relaxed solve to traces
+    a_hat_trace.append(results_dual.a_hat.copy())
+    multipliers_trace.append(results_dual.multipliers.copy())
 
     # Check for any global IC violations
     iterations = 0
     while iterations < n_a_iterations:
         iterations += 1
         a_best, utility_best = _agent_best_action(
-            v=results.optimal_contract,
+            v=results_dual.optimal_contract,
             a_lb=a_ic_lb,
             a_ub=a_ic_ub,
             n_a_grid_points=n_a_grid_points,
             problem=problem,
         )
-        if (utility_best > results.constraints['U0'] + 1e-6) and np.abs(a_best - intended_action) > 1e-6:
+
+        global_ic_violation = utility_best - results_dual.constraints['U0']
+        best_action_distance = np.abs(a_best - intended_action)
+        
+        # Add diagnostics to traces
+        global_ic_violation_trace.append(global_ic_violation)
+        best_action_distance_trace.append(best_action_distance)
+        best_action_trace.append(a_best)
+
+        if global_ic_violation > 1e-6 and best_action_distance > 1e-6:
             a_hat = np.concatenate([a_always_check_global_ic, np.array([a_best])])
-            results, theta_optimal = _minimize_cost_a_hat(
+            results_dual, theta_optimal = _maximize_lagrange_dual(
                 a0=intended_action,
                 Ubar=reservation_utility,
                 a_hat=a_hat,
@@ -267,8 +288,30 @@ def _minimize_cost_internal(
                 theta_init=theta_relaxed_optimal,
                 clip_ratio=clip_ratio,
             )
+
+            # Add this iteration to traces
+            a_hat_trace.append(results_dual.a_hat.copy())
+            multipliers_trace.append(results_dual.multipliers.copy())
         else:
             break
 
-    return results, theta_optimal
+    # Build CostMinimizationResults with traces
+    cost_results = CostMinimizationResults(
+        a0=results_dual.a0,
+        Ubar=results_dual.Ubar,
+        a_hat=results_dual.a_hat,
+        optimal_contract=results_dual.optimal_contract,
+        expected_wage=results_dual.expected_wage,
+        multipliers=results_dual.multipliers,
+        constraints=results_dual.constraints,
+        solver_state=results_dual.solver_state,
+        n_outer_iterations=len(multipliers_trace),
+        a_hat_trace=a_hat_trace,
+        multipliers_trace=multipliers_trace,
+        global_ic_violation_trace=global_ic_violation_trace,
+        best_action_distance_trace=best_action_distance_trace,
+        best_action_trace=best_action_trace,
+    )
+    
+    return cost_results
 
