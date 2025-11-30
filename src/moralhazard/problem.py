@@ -134,7 +134,7 @@ class MoralHazardProblem:
 
         if solver == "a_hat":
             if a_hat is None:
-                raise ValueError("a_hat is required when solver='a_hat'")
+                a_hat = np.array([])
             
             # Entry point: convert to numpy array
             a_hat_arr = np.asarray(a_hat, dtype=np.float64)
@@ -144,6 +144,28 @@ class MoralHazardProblem:
             # Entry point: convert theta_init if provided
             theta_init_arr = np.asarray(theta_init, dtype=np.float64) if theta_init is not None else None
 
+            # Warm start logic: if a_hat is non-empty and theta_init is not provided,
+            # solve first with empty a_hat to get a good initial guess for lam and mu
+            if theta_init_arr is None and a_hat_arr.shape[0] > 0:
+                # Solve with empty a_hat (easier problem, fewer variables)
+                _, theta_init_arr = _minimize_cost_a_hat(
+                    intended_action,
+                    reservation_utility,
+                    np.array([], dtype=np.float64),  # Empty a_hat
+                    y_grid=self._y_grid,
+                    w=self._w,
+                    f=self._primitives["f"],
+                    score=self._primitives["score"],
+                    C=self._primitives["C"],
+                    Cprime=self._primitives["Cprime"],
+                    g=self._primitives["g"],
+                    k=self._primitives["k"],
+                    theta_init=None,  # No warm start for the empty a_hat solve
+                    clip_ratio=clip_ratio,
+                )
+                # theta_init_arr now has shape (2,) - will be padded by _minimize_cost_a_hat
+
+            # Solve the cost minimization problem with the actual a_hat
             results, theta_opt = _minimize_cost_a_hat(
                 intended_action,
                 reservation_utility,

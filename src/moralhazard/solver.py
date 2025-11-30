@@ -26,6 +26,38 @@ def _encode_theta(lam: float, mu: float, mu_hat: np.ndarray) -> np.ndarray:
     """
     return np.concatenate([np.array([lam, mu], dtype=np.float64), np.atleast_1d(mu_hat).astype(np.float64)])
 
+def _pad_theta_for_warm_start(theta: np.ndarray, target_m: int) -> np.ndarray:
+    """
+    Pad a theta vector to match a target number of mu_hat components.
+    
+    If theta has shape (2,), pads with zeros to shape (2 + target_m,).
+    If theta already has the correct shape, returns it unchanged.
+    If theta has more components than needed, truncates (though this is unusual).
+    
+    Args:
+        theta: Current theta vector, shape (2,) or (2 + m,)
+        target_m: Target number of mu_hat components
+        
+    Returns:
+        Padded theta vector of shape (2 + target_m,)
+    """
+    current_shape = theta.shape[0]
+    target_shape = 2 + target_m
+    
+    if current_shape == target_shape:
+        return theta
+    elif current_shape == 2:
+        # Pad with zeros for mu_hat components
+        return np.concatenate([theta, np.zeros(target_m, dtype=np.float64)])
+    elif current_shape > target_shape:
+        # Truncate (unusual case)
+        return theta[:target_shape]
+    else:
+        # This shouldn't happen, but handle gracefully
+        # Pad with zeros
+        padding = np.zeros(target_shape - current_shape, dtype=np.float64)
+        return np.concatenate([theta, padding])
+
 def _dual_value_and_grad(
     theta: np.ndarray,
     cache: Dict[str, Any],
@@ -111,8 +143,16 @@ def _minimize_cost_a_hat(
     def _select_x0() -> np.ndarray:
         # 1) user-provided theta_init
         if theta_init is not None:
-            if theta_init.shape == expected_shape and np.all(np.isfinite(theta_init)):
-                return theta_init
+            if np.all(np.isfinite(theta_init)):
+                if theta_init.shape == expected_shape:
+                    return theta_init
+                else:
+                    # Try to pad/truncate to match expected shape
+                    # This allows warm starting lam and mu from an empty a_hat solve
+                    padded = _pad_theta_for_warm_start(theta_init, m)
+                    if padded.shape == expected_shape:
+                        warn_flags.append("theta_init_shape_mismatch_padded")
+                        return padded
             warn_flags.append("theta_init_shape_mismatch_or_nonfinite")
 
         # 2) default
