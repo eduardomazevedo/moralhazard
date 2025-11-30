@@ -63,44 +63,12 @@ mhp = MoralHazardProblem(cfg)
 results = mhp.solve_cost_minimization_problem(
     intended_action=80.0,
     reservation_utility=reservation_utility,
-    a_hat=np.array([0.0]),
+    a_ic_lb=0.0,
+    a_ic_ub=100.0,
+    n_a_grid_points=10,
+    n_a_iterations=1
 )
 
 print("Cost minimization problem results:")
 print("Multipliers found:")
 print(results.multipliers)
-
-# Verify both configs produce same results
-mhp_alt = MoralHazardProblem(cfg_alt)
-results_alt = mhp_alt.solve_cost_minimization_problem(
-    intended_action=80.0,
-    reservation_utility=reservation_utility,
-    a_hat=np.array([0.0]),
-)
-
-print(f"Config maker produces same multipliers: {np.allclose(results.multipliers['lam'], results_alt.multipliers['lam']) and np.allclose(results.multipliers['mu'], results_alt.multipliers['mu'])}")
-
-# ---- principals problem ----
-principal_results = mhp.solve_principal_problem(
-    revenue_function=lambda aa: aa,
-    reservation_utility=reservation_utility,
-    a_min=0.0,
-    a_max=130.0,
-    a_init=80.0,
-    a_hat=np.array([0.0]),
-)
-
-print("\nPrincipal problem results:")
-print(f"  Profit: {principal_results.profit:.3f}")
-print(f"  Optimal action (a*): {principal_results.optimal_action:.3f}")
-print(f"  Inner multipliers at a*: {principal_results.multipliers}")
-
-# ---- plots ----
-# 1) Wage schedule k(v*(y)) vs y
-y_grid = mhp.y_grid
-v = principal_results.optimal_contract            # utils on the grid
-wage = mhp.k(v)                         # dollars on the grid
-
-#
-a_grid = np.linspace(0, 140, 100)
-U_grid = mhp.U(v, a_grid)

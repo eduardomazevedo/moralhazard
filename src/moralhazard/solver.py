@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, Any, Callable, Tuple
+from typing import Dict, Any, Callable, Tuple, TYPE_CHECKING
 import numpy as np
 from scipy.optimize import minimize, minimize_scalar
 
 from .types import SolveResults
-from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
+from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility, _agent_best_action
+
+if TYPE_CHECKING:
+    from .problem import MoralHazardProblem
 
 
 def _decode_theta(theta: np.ndarray) -> tuple[float, float, np.ndarray]:
@@ -61,8 +64,7 @@ def _pad_theta_for_warm_start(theta: np.ndarray, target_m: int) -> np.ndarray:
 def _dual_value_and_grad(
     theta: np.ndarray,
     cache: Dict[str, Any],
-    g: Callable[[np.ndarray], np.ndarray],
-    k: Callable[[np.ndarray], np.ndarray],
+    problem: "MoralHazardProblem",
     Ubar: float,
 ) -> Tuple[float, np.ndarray]:
     """
@@ -76,10 +78,10 @@ def _dual_value_and_grad(
     lam, mu, mu_hat = _decode_theta(theta)
 
     # Inner optimum v*(θ) via canonical map
-    v = _canonical_contract(lam, mu, mu_hat, cache["s0"], cache["R"], g)
+    v = _canonical_contract(lam, mu, mu_hat, cache["s0"], cache["R"], problem)
 
     # Constraints at v
-    cons = _constraints(v, cache=cache, k=k, Ubar=Ubar)
+    cons = _constraints(v, cache=cache, problem=problem, Ubar=Ubar)
 
     IR = cons["IR"]
     FOC = cons["FOC"]
@@ -102,14 +104,7 @@ def _minimize_cost_a_hat(
     Ubar: float,
     a_hat: np.ndarray,
     *,
-    y_grid: np.ndarray,
-    w: np.ndarray,
-    f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
-    score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
-    C: Callable[[float | np.ndarray], float | np.ndarray],
-    Cprime: Callable[[float | np.ndarray], float | np.ndarray],
-    g: Callable[[np.ndarray], np.ndarray],
-    k: Callable[[np.ndarray], np.ndarray],
+    problem: "MoralHazardProblem",
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
     ftol: float = 1e-8,
@@ -126,12 +121,7 @@ def _minimize_cost_a_hat(
     cache = _make_cache(
         a0,
         a_hat,
-        y_grid=y_grid,
-        w=w,
-        f=f,
-        score=score,
-        C=C,
-        Cprime=Cprime,
+        problem=problem,
         clip_ratio=clip_ratio,
     )
 
@@ -172,7 +162,7 @@ def _minimize_cost_a_hat(
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": int(maxiter), "ftol": ftol},
-        args=(cache, g, k, Ubar),
+        args=(cache, problem, Ubar),
     )
     t1 = time.time()
 
@@ -199,8 +189,8 @@ def _minimize_cost_a_hat(
 
     # Reconstruct v*(θ) and constraints for reporting
     lam_opt, mu_opt, mu_hat_opt = _decode_theta(theta_opt)
-    v_star = _canonical_contract(lam_opt, mu_opt, mu_hat_opt, cache["s0"], cache["R"], g)
-    cons = _constraints(v_star, cache=cache, k=k, Ubar=Ubar)
+    v_star = _canonical_contract(lam_opt, mu_opt, mu_hat_opt, cache["s0"], cache["R"], problem)
+    cons = _constraints(v_star, cache=cache, problem=problem, Ubar=Ubar)
 
     # Multipliers (use decoded values)
     lam = lam_opt
@@ -227,162 +217,58 @@ def _minimize_cost_a_hat(
     return results, theta_opt
 
 
-def _minimize_cost_iterative(
-    a0: float,
-    Ubar: float,
+def _minimize_cost_internal(
+    intended_action: float,
+    reservation_utility: float,
     *,
+    problem: "MoralHazardProblem",
     n_a_iterations: int = 1,
-    y_grid: np.ndarray,
-    w: np.ndarray,
-    f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
-    score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
-    C: Callable[[float | np.ndarray], float | np.ndarray],
-    Cprime: Callable[[float | np.ndarray], float | np.ndarray],
-    g: Callable[[np.ndarray], np.ndarray],
-    k: Callable[[np.ndarray], np.ndarray],
     theta_init: np.ndarray | None = None,
-    maxiter: int = 1000,
-    ftol: float = 1e-8,
     clip_ratio: float = 1e6,
-    a_ic_lb: float = -np.inf,
+    a_ic_lb: float = 0,
     a_ic_ub: float = np.inf,
-    a_ic_initial: float = 0.0,
+    n_a_grid_points: int = 10,
+    a_always_check_global_ic: np.ndarray = np.array([0.0])
 ) -> tuple[SolveResults, np.ndarray]:
     """
-    Solve the dual iteratively by updating a_hat based on expected utility maximization.
-    
-    This method iteratively solves the cost minimization problem by:
-    1. Starting with a_current = a_ic_initial
-    2. Solving with a_hat = [0, a_current]
-    3. Finding the action that maximizes expected utility within the specified bounds
-    4. If the arg max is close to a0, set a_hat = [0, 0]
-    5. If the arg max is far from a0, set a_hat = [0, arg max]
-    6. Repeating for n_a_iterations
-    
-    Args:
-        a0: intended action
-        Ubar: reservation utility
-        n_a_iterations: number of iterations to perform (after the initial guess)
-        y_grid: outcome grid
-        w: Simpson weights
-        f: density function
-        score: score function
-        C: cost function
-        Cprime: derivative of cost function
-        g: link function
-        k: wage function
-        theta_init: optional initial theta for warm-starting
-        maxiter: maximum iterations for optimizer
-        ftol: function tolerance for optimizer
-        a_ic_lb: lower bound for action search (default: -infinity)
-        a_ic_ub: upper bound for action search (default: infinity)
-        a_ic_initial: initial action value to start search from (default: 0.0)
-        
-    Returns:
-        - SolveResults from final iteration
-        - theta_opt for warm-starting
+    Internal method to solve cost minimization problem. Calls minimize_cost_a_hat.
+    First solves relaxed problem (a_hat = []).
+    Then finds largest global IC violation, and iteratively adds biggest constraint violation to a_hat.
     """
-    # Initialize a_current with the provided initial value
-    a_current = a_ic_initial
-    
-    # Initialize theta for warm-starting across iterations
-    # Note: warm-starting might not work well when a_hat shape changes
-    current_theta = theta_init
-    
-    for iteration in range(n_a_iterations + 1):
-        # Set a_hat for this iteration
-        # Ensure a_current is a scalar (not numpy array) for array construction
-        a_current_scalar = a_current.item() if isinstance(a_current, np.ndarray) else a_current
-        a_hat = np.array([0.0, a_current_scalar])
-        
-        # Solve the cost minimization problem
-        results, theta_opt = _minimize_cost_a_hat(
-            a0=a0,
-            Ubar=Ubar,
-            a_hat=a_hat,
-            y_grid=y_grid,
-            w=w,
-            f=f,
-            score=score,
-            C=C,
-            Cprime=Cprime,
-            g=g,
-            k=k,
-            theta_init=current_theta,
-            maxiter=maxiter,
-            ftol=ftol,
-            clip_ratio=clip_ratio,
-        )
-        
-        # Update theta for next iteration
-        current_theta = theta_opt
-        
-        # Only update a_current if this isn't the last iteration
-        if iteration < n_a_iterations:
-            v_optimal = results.optimal_contract
-            
-            # Define negative utility function for maximization
-            def neg_utility(a):
-                utility = _compute_expected_utility(
-                    v=v_optimal,
-                    a=a,
-                    y_grid=y_grid,
-                    w=w,
-                    f=f,
-                    C=C,
-                )
-                return -utility
-            
-            # Find the action that maximizes utility within the specified bounds
-            # Use the provided bounds, but ensure they're reasonable
-            a_lower = max(a_ic_lb, -0.9 * abs(a0))  # Reasonable lower bound
-            a_upper = min(a_ic_ub, 0.9 * abs(a0))    # Reasonable upper bound
-            
-            # Ensure we have a valid bracket for the optimizer
-            if a_lower >= a_upper:
-                a_lower = a_upper - 0.1  # Ensure lower < upper
-            
-            opt_result = minimize_scalar(
-                neg_utility,
-                bounds=(a_lower, a_upper),
-                method='bounded',
-                options={'xatol': 1e-8}
-            )
-            
-            if opt_result.success:
-                arg_max_a = opt_result.x
-                
-                # The optimizer now respects bounds, so arg_max_a is already within constraints
-                # Check if arg max is close to a0
-                # Use a small threshold relative to |a0| or absolute threshold
-                threshold = max(0.1 * abs(a0), 0.01)
-                
-                if abs(arg_max_a - a0) <= threshold:
-                    a_current = 0.0  # Set a_hat = [0] (more efficient than [0, 0])
-                else:
-                    a_current = arg_max_a  # Set a_hat = [0, arg_max]
-            else:
-                # If optimization fails, keep current value
-                pass
-    
-    # Return the final results with consistent structure
-    # Ensure a_current is a scalar (not numpy array) for array construction
-    a_current_scalar = a_current.item() if isinstance(a_current, np.ndarray) else a_current
-    a_hat = np.array([0.0, a_current_scalar])
-    
-    # Create a new SolveResults object with the final a_hat value
-    final_results = SolveResults(
-        a0=results.a0,
-        Ubar=results.Ubar,
-        a_hat=a_hat,
-        optimal_contract=results.optimal_contract,
-        expected_wage=results.expected_wage,
-        multipliers=results.multipliers,
-        constraints=results.constraints,
-        solver_state=results.solver_state,
+    # Solve relaxed problem
+    results, theta_optimal = _minimize_cost_a_hat(
+        a0=intended_action,
+        Ubar=reservation_utility,
+        a_hat=np.array([], dtype=np.float64),
+        problem=problem,
+        theta_init=theta_init,
+        clip_ratio=clip_ratio,
     )
-    
-    return final_results, current_theta
+    theta_relaxed_optimal = theta_optimal
 
+    # Check for any global IC violations
+    iterations = 0
+    while iterations < n_a_iterations:
+        iterations += 1
+        a_best, utility_best = _agent_best_action(
+            v=results.optimal_contract,
+            a_lb=a_ic_lb,
+            a_ub=a_ic_ub,
+            n_a_grid_points=n_a_grid_points,
+            problem=problem,
+        )
+        if (utility_best > results.constraints['U0'] + 1e-6) and np.abs(a_best - intended_action) > 1e-6:
+            a_hat = np.concatenate([a_always_check_global_ic, np.array([a_best])])
+            results, theta_optimal = _minimize_cost_a_hat(
+                a0=intended_action,
+                Ubar=reservation_utility,
+                a_hat=a_hat,
+                problem=problem,
+                theta_init=theta_relaxed_optimal,
+                clip_ratio=clip_ratio,
+            )
+        else:
+            break
 
+    return results, theta_optimal
 

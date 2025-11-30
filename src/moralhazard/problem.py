@@ -6,7 +6,7 @@ import numpy as np
 
 from .types import SolveResults, PrincipalSolveResults
 from .grids import _make_grid
-from .solver import _minimize_cost_a_hat, _minimize_cost_iterative
+from .solver import _minimize_cost_a_hat, _minimize_cost_iterative, _minimize_cost_internal
 from .utils import _make_expected_wage_fun, _solve_principal_problem
 from .core import _compute_expected_utility
 
@@ -92,6 +92,41 @@ class MoralHazardProblem:
         """Read-only outcome grid used internally (shape (n,))."""
         return self._y_grid
 
+    @property
+    def w(self) -> np.ndarray:
+        """Read-only Simpson weights used internally (shape (n,))."""
+        return self._w
+
+    @property
+    def f(self) -> Callable:
+        """Density function f(y|a)."""
+        return self._primitives["f"]
+
+    @property
+    def score(self) -> Callable:
+        """Score function score(y|a)."""
+        return self._primitives["score"]
+
+    @property
+    def C(self) -> Callable:
+        """Cost function C(a)."""
+        return self._primitives["C"]
+
+    @property
+    def Cprime(self) -> Callable:
+        """Derivative of cost function C'(a)."""
+        return self._primitives["Cprime"]
+
+    @property
+    def g(self) -> Callable:
+        """Link function g(z)."""
+        return self._primitives["g"]
+
+    @property
+    def k_func(self) -> Callable:
+        """Wage function k(v)."""
+        return self._primitives["k"]
+
     def k(self, v: np.ndarray) -> np.ndarray:
         """Convenience passthrough to problem_params['k']."""
         return self._primitives["k"](v)
@@ -102,14 +137,13 @@ class MoralHazardProblem:
         self,
         intended_action: float,
         reservation_utility: float,
-        solver: str = "a_hat",
-        a_hat: np.ndarray | None = None,
+        a_ic_lb: float,
+        a_ic_ub: float,
+        n_a_grid_points: int = 10,
         n_a_iterations: int = 1,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
-        a_ic_lb: float = -np.inf,
-        a_ic_ub: float = np.inf,
-        a_ic_initial: float = 0.0,
+        a_always_check_global_ic: np.ndarray = np.array([0.0])
     ) -> SolveResults:
         """
         Solve the dual for the cost-minimizing contract at a given intended action a0.
@@ -117,92 +151,30 @@ class MoralHazardProblem:
         Args:
             intended_action: The intended action a0
             reservation_utility: The reservation utility Ubar
-            solver: Either "a_hat" (default) or "iterative"
-            a_hat: Required when solver="a_hat". The action grid for the solve.
             n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
             theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
-            a_ic_lb: Lower bound for action search when using iterative solver (default: -infinity)
+            a_ic_lb: Lower bound for action search when using iterative solver (default: 0)
             a_ic_ub: Upper bound for action search when using iterative solver (default: infinity)
-            a_ic_initial: Initial action value to start search from when using iterative solver (default: 0.0)
+            n_a_grid_points: Number of grid points for the action grid. Defaults to 10.
+            a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0].
 
         Returns:
             SolveResults object.
         """
-        if solver not in ["a_hat", "iterative"]:
-            raise ValueError(f"solver must be 'a_hat' or 'iterative', got '{solver}'")
 
-        if solver == "a_hat":
-            if a_hat is None:
-                a_hat = np.array([])
-            
-            # Entry point: convert to numpy array
-            a_hat_arr = np.asarray(a_hat, dtype=np.float64)
-            if a_hat_arr.ndim != 1:
-                raise ValueError(f"a_hat must be a 1D array; got shape {a_hat_arr.shape}")
-
-            # Entry point: convert theta_init if provided
-            theta_init_arr = np.asarray(theta_init, dtype=np.float64) if theta_init is not None else None
-
-            # Warm start logic: if a_hat is non-empty and theta_init is not provided,
-            # solve first with empty a_hat to get a good initial guess for lam and mu
-            if theta_init_arr is None and a_hat_arr.shape[0] > 0:
-                # Solve with empty a_hat (easier problem, fewer variables)
-                _, theta_init_arr = _minimize_cost_a_hat(
-                    intended_action,
-                    reservation_utility,
-                    np.array([], dtype=np.float64),  # Empty a_hat
-                    y_grid=self._y_grid,
-                    w=self._w,
-                    f=self._primitives["f"],
-                    score=self._primitives["score"],
-                    C=self._primitives["C"],
-                    Cprime=self._primitives["Cprime"],
-                    g=self._primitives["g"],
-                    k=self._primitives["k"],
-                    theta_init=None,  # No warm start for the empty a_hat solve
-                    clip_ratio=clip_ratio,
-                )
-                # theta_init_arr now has shape (2,) - will be padded by _minimize_cost_a_hat
-
-            # Solve the cost minimization problem with the actual a_hat
-            results, theta_opt = _minimize_cost_a_hat(
-                intended_action,
-                reservation_utility,
-                a_hat_arr,
-                y_grid=self._y_grid,
-                w=self._w,
-                f=self._primitives["f"],
-                score=self._primitives["score"],
-                C=self._primitives["C"],
-                Cprime=self._primitives["Cprime"],
-                g=self._primitives["g"],
-                k=self._primitives["k"],
-                theta_init=theta_init_arr,
-                clip_ratio=clip_ratio,
-            )
-        else:  # solver == "iterative"
-            # Entry point: convert theta_init if provided
-            theta_init_arr = np.asarray(theta_init, dtype=np.float64) if theta_init is not None else None
-
-            results, theta_opt = _minimize_cost_iterative(
-                a0=intended_action,
-                Ubar=reservation_utility,
-                n_a_iterations=int(n_a_iterations),
-                y_grid=self._y_grid,
-                w=self._w,
-                f=self._primitives["f"],
-                score=self._primitives["score"],
-                C=self._primitives["C"],
-                Cprime=self._primitives["Cprime"],
-                g=self._primitives["g"],
-                k=self._primitives["k"],
-                theta_init=theta_init_arr,
-                clip_ratio=clip_ratio,
-                a_ic_lb=a_ic_lb,
-                a_ic_ub=a_ic_ub,
-                a_ic_initial=a_ic_initial,
-            )
+        results, _ = _minimize_cost_internal(
+            intended_action,
+            reservation_utility,
+            problem=self,
+            n_a_iterations=n_a_iterations,
+            theta_init=theta_init,
+            clip_ratio=clip_ratio,
+            a_ic_lb=a_ic_lb,
+            a_ic_ub=a_ic_ub,
+            n_a_grid_points=n_a_grid_points,
+            a_always_check_global_ic=a_always_check_global_ic,
+        )
 
         return results
 
@@ -244,14 +216,7 @@ class MoralHazardProblem:
         a_hat_arr = np.asarray(a_hat, dtype=np.float64) if a_hat is not None else None
 
         F = _make_expected_wage_fun(
-            y_grid=self._y_grid,
-            w=self._w,
-            f=self._primitives["f"],
-            score=self._primitives["score"],
-            C=self._primitives["C"],
-            Cprime=self._primitives["Cprime"],
-            g=self._primitives["g"],
-            k=self._primitives["k"],
+            problem=self,
             Ubar=reservation_utility,
             solver=solver,
             a_hat=a_hat_arr,
@@ -286,10 +251,7 @@ class MoralHazardProblem:
         return _compute_expected_utility(
             v=v_arr,
             a=a_val,
-            y_grid=self._y_grid,
-            w=self._w,
-            f=self._primitives["f"],
-            C=self._primitives["C"],
+            problem=self,
         )
 
     def solve_principal_problem(
@@ -357,14 +319,11 @@ class MoralHazardProblem:
         inner: SolveResults = self.solve_cost_minimization_problem(
             intended_action=a_star,
             reservation_utility=reservation_utility,
-            solver=solver,
-            a_hat=a_hat_arr,
             n_a_iterations=n_a_iterations,
             theta_init=theta_init_arr,
             clip_ratio=clip_ratio,
             a_ic_lb=a_ic_lb,
             a_ic_ub=a_ic_ub,
-            a_ic_initial=a_ic_initial,
         )
 
         # 4) Pack results

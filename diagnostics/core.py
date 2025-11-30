@@ -7,7 +7,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from moralhazard.core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
-from moralhazard.grids import _make_grid
+from moralhazard.problem import MoralHazardProblem
 
 # Redirect output to file
 output_dir = os.path.join(os.path.dirname(__file__), 'output')
@@ -39,12 +39,19 @@ def f(y, a):
 def score(y, a):
     return (y - a) / (sigma ** 2)
 
-# ---- Create a tiny grid for testing ----
+# ---- Create a MoralHazardProblem instance for testing ----
 y_min = 0.0 - 3 * sigma
 y_max = 100.0 + 3 * sigma
 n = 11  # Small odd number for tiny example
 
-y_grid, w = _make_grid("continuous", {"y_min": y_min, "y_max": y_max, "n": n})
+cfg = {
+    "problem_params": {"u": u, "k": k, "link_function": g, "C": C, "Cprime": Cprime, "f": f, "score": score},
+    "computational_params": {"distribution_type": "continuous", "y_min": y_min, "y_max": y_max, "n": n},
+}
+
+mhp = MoralHazardProblem(cfg)
+y_grid = mhp.y_grid
+w = mhp.w
 
 print(f"Grid setup:")
 print(f"  y_min = {y_min:.2f}, y_max = {y_max:.2f}, n = {n}")
@@ -65,12 +72,7 @@ a_hat = np.array([60.0, 100.0])
 cache = _make_cache(
     a0=a0,
     a_hat=a_hat,
-    y_grid=y_grid,
-    w=w,
-    f=f,
-    score=score,
-    C=C,
-    Cprime=Cprime,
+    problem=mhp,
     clip_ratio=1e6,
 )
 
@@ -121,12 +123,7 @@ a_hat_empty = np.array([])  # Empty array
 cache_empty = _make_cache(
     a0=a0_empty,
     a_hat=a_hat_empty,
-    y_grid=y_grid,
-    w=w,
-    f=f,
-    score=score,
-    C=C,
-    Cprime=Cprime,
+    problem=mhp,
     clip_ratio=1e6,
 )
 
@@ -189,7 +186,7 @@ v = _canonical_contract(
     mu_hat=mu_hat,
     s0=s0,
     R=R,
-    g=g,
+    problem=mhp,
 )
 
 print(f"Inputs:")
@@ -217,7 +214,7 @@ Ubar = 3.0
 constraint_results = _constraints(
     v=v,
     cache=cache,
-    k=k,
+    problem=mhp,
     Ubar=Ubar,
 )
 
@@ -248,10 +245,7 @@ a_scalar = 75.0
 U_scalar = _compute_expected_utility(
     v=v,
     a=a_scalar,
-    y_grid=y_grid,
-    w=w,
-    f=f,
-    C=C,
+    problem=mhp,
 )
 
 print(f"Inputs:")
@@ -275,10 +269,7 @@ a_array = np.array([60.0, 75.0, 90.0, 100.0])
 U_array = _compute_expected_utility(
     v=v,
     a=a_array,
-    y_grid=y_grid,
-    w=w,
-    f=f,
-    C=C,
+    problem=mhp,
 )
 
 print(f"Inputs:")

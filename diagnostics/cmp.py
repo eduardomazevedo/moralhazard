@@ -13,7 +13,7 @@ initial_wealth = 50
 sigma = 10.0
 first_best_effort = 100
 theta = 1.0 / first_best_effort / (first_best_effort + initial_wealth)
-reservation_wages = np.linspace(-1.0, 100.0, 100)
+reservation_wages = np.linspace(-1.0, 100.0, 5)
 
 utility_cfg = make_utility_cfg("log", w0=initial_wealth)
 dist_cfg = make_distribution_cfg("gaussian", sigma=sigma)
@@ -44,10 +44,8 @@ cfg = {
 mhp = MoralHazardProblem(cfg)
 u_fun = cfg["problem_params"]["u"]
 
-a_min = 0.0
-a_max = 130.0
-a_init = 100.0
-a_hat = np.array([0.0])
+a_ic_lb = 0.0
+a_ic_ub = 130.0
 
 # --------------------
 # Output DataFrames
@@ -70,10 +68,10 @@ for w in reservation_wages:
     cm = mhp.solve_cost_minimization_problem(
         intended_action=first_best_effort,
         reservation_utility=u_fun(w),
-        a_hat=a_hat,
+        a_ic_lb=a_ic_lb,
+        a_ic_ub=a_ic_ub,
+        n_a_iterations=5
     )
-
-    
 
     cm_mult = cm.multipliers
     cm_lam = cm_mult["lam"]

@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any, TYPE_CHECKING
 import numpy as np
 
 from .solver import _minimize_cost_a_hat, _minimize_cost_iterative
 
+if TYPE_CHECKING:
+    from .problem import MoralHazardProblem
+
 
 def _make_expected_wage_fun(
     *,
-    y_grid: np.ndarray,
-    w: np.ndarray,
-    f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
-    score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
-    C: Callable[[float | np.ndarray], float | np.ndarray],
-    Cprime: Callable[[float | np.ndarray], float | np.ndarray],
-    g: Callable[[np.ndarray], np.ndarray],
-    k: Callable[[np.ndarray], np.ndarray],
+    problem: "MoralHazardProblem",
     Ubar: float,
     solver: str = "a_hat",
     a_hat: np.ndarray | None = None,
@@ -50,14 +46,7 @@ def _make_expected_wage_fun(
                 a,
                 Ubar,
                 a_hat,
-                y_grid=y_grid,
-                w=w,
-                f=f,
-                score=score,
-                C=C,
-                Cprime=Cprime,
-                g=g,
-                k=k,
+                problem=problem,
                 theta_init=theta_init,
                 clip_ratio=clip_ratio,
             )
@@ -65,15 +54,8 @@ def _make_expected_wage_fun(
             results, theta_opt = _minimize_cost_iterative(
                 a0=a,
                 Ubar=Ubar,
+                problem=problem,
                 n_a_iterations=int(n_a_iterations),
-                y_grid=y_grid,
-                w=w,
-                f=f,
-                score=score,
-                C=C,
-                Cprime=Cprime,
-                g=g,
-                k=k,
                 theta_init=theta_init,
                 clip_ratio=clip_ratio,
                 a_ic_lb=a_ic_lb,
