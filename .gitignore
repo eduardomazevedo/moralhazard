@@ -27,6 +27,7 @@ wheels/
 
 # Output
 examples/output/
+diagnostics/output/
 
 # Tests
 /.pytest_cache/

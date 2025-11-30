@@ -154,7 +154,7 @@ def make_distribution_cfg(
     kind = dist.strip().lower()
 
     if kind == "gaussian":
-        sigma = float(params.get("sigma", None) or 1.0)
+        sigma = params.get("sigma", None) or 1.0
         if sigma <= 0:
             raise ValueError("gaussian requires sigma > 0.")
 
@@ -258,7 +258,7 @@ def make_distribution_cfg(
         return {"f": f, "score": score}
 
     if kind == "binomial":
-        n = float(params.get("n", None) or 1.0)
+        n = params.get("n", None) or 1.0
         if n <= 0 or abs(n - round(n)) > 1e-9:
             raise ValueError("binomial requires integer n >= 1.")
         n = int(n)
@@ -287,7 +287,7 @@ def make_distribution_cfg(
 
     if kind == "gamma":
         # shape n > 0, scale a (mean = n * a)
-        n = float(params.get("n", None) or 1.0)
+        n = params.get("n", None) or 1.0
         if n <= 0:
             raise ValueError("gamma requires n > 0 (shape).")
 
@@ -311,8 +311,8 @@ def make_distribution_cfg(
         return {"f": f, "score": score}
 
     if kind == "student_t":
-        nu = float(params.get("nu", None) or 5.0)
-        sigma = float(params.get("sigma", None) or 1.0)
+        nu = params.get("nu", None) or 5.0
+        sigma = params.get("sigma", None) or 1.0
         if nu <= 0 or sigma <= 0:
             raise ValueError("student_t requires nu > 0 and sigma > 0.")
 

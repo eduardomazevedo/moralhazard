@@ -9,6 +9,23 @@ from .types import SolveResults
 from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
 
 
+def _decode_theta(theta: np.ndarray) -> tuple[float, float, np.ndarray]:
+    """
+    Decode the theta array into lam, mu, and mu_hat.
+    """
+    lam = theta[0]
+    mu = theta[1]
+    mu_hat = theta[2:]
+    return lam, mu, mu_hat
+
+def _encode_theta(lam: float, mu: float, mu_hat: np.ndarray) -> np.ndarray:
+    """
+    Encode the lam, mu, and mu_hat into a theta array.
+    
+    Returns an array of shape (2 + m,) where m is the length of mu_hat.
+    """
+    return np.concatenate([np.array([lam, mu], dtype=np.float64), np.atleast_1d(mu_hat).astype(np.float64)])
+
 def _dual_value_and_grad(
     theta: np.ndarray,
     cache: Dict[str, Any],
@@ -24,15 +41,13 @@ def _dual_value_and_grad(
     """
     m = cache["R"].shape[1]
 
-    lam = theta[0]
-    mu = theta[1]
-    mu_hat = theta[2:]
+    lam, mu, mu_hat = _decode_theta(theta)
 
     # Inner optimum v*(θ) via canonical map
-    v = _canonical_contract(theta, cache["s0"], cache["R"], g)
+    v = _canonical_contract(lam, mu, mu_hat, cache["s0"], cache["R"], g)
 
     # Constraints at v
-    cons = _constraints(v, cache, k=k, Ubar=float(Ubar))
+    cons = _constraints(v, cache=cache, k=k, Ubar=Ubar)
 
     IR = cons["IR"]
     FOC = cons["FOC"]
@@ -47,7 +62,7 @@ def _dual_value_and_grad(
     grad[1] = -FOC
     if IC.size:
         grad[2:] = IC
-    return -float(g_dual), -grad  # minimizer expects -g and -∇g
+    return -g_dual, -grad  # minimizer expects -g and -∇g
 
 
 def _minimize_cost_a_hat(
@@ -77,14 +92,15 @@ def _minimize_cost_a_hat(
     """
     # Build precomputed cache (no primitives or raw params stored)
     cache = _make_cache(
-        float(a0),
-        np.asarray(a_hat, dtype=np.float64),
-        np.asarray(y_grid, dtype=np.float64),
-        np.asarray(w, dtype=np.float64),
+        a0,
+        a_hat,
+        y_grid=y_grid,
+        w=w,
         f=f,
         score=score,
         C=C,
         Cprime=Cprime,
+        clip_ratio=clip_ratio,
     )
 
     # Initialization policy
@@ -95,9 +111,8 @@ def _minimize_cost_a_hat(
     def _select_x0() -> np.ndarray:
         # 1) user-provided theta_init
         if theta_init is not None:
-            ti = np.asarray(theta_init, dtype=np.float64)
-            if ti.shape == expected_shape and np.all(np.isfinite(ti)):
-                return ti
+            if theta_init.shape == expected_shape and np.all(np.isfinite(theta_init)):
+                return theta_init
             warn_flags.append("theta_init_shape_mismatch_or_nonfinite")
 
         # 2) default
@@ -116,13 +131,13 @@ def _minimize_cost_a_hat(
         jac=True,
         method="L-BFGS-B",
         bounds=bounds,
-        options={"maxiter": int(maxiter), "ftol": float(ftol)},
-        args=(cache, g, k, float(Ubar)),
+        options={"maxiter": int(maxiter), "ftol": ftol},
+        args=(cache, g, k, Ubar),
     )
     t1 = time.time()
 
-    theta_opt = np.asarray(res.x, dtype=np.float64)
-    grad_norm = float(np.linalg.norm(np.asarray(res.jac, dtype=np.float64))) if hasattr(res, "jac") else None
+    theta_opt = res.x
+    grad_norm = np.linalg.norm(res.jac) if hasattr(res, "jac") and res.jac is not None else None
 
     state = {
         "method": "L-BFGS-B",
@@ -132,8 +147,8 @@ def _minimize_cost_a_hat(
         "niter": int(getattr(res, "nit", -1)),
         "nfev": int(getattr(res, "nfev", -1)) if hasattr(res, "nfev") else None,
         "njev": int(getattr(res, "njev", -1)) if hasattr(res, "njev") else None,
-        "time_sec": float(t1 - t0),
-        "fun": float(res.fun),      # minimized value: -g_dual
+        "time_sec": t1 - t0,
+        "fun": res.fun,      # minimized value: -g_dual
         "grad_norm": grad_norm,
     }
     if warn_flags:
@@ -143,28 +158,29 @@ def _minimize_cost_a_hat(
         raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
 
     # Reconstruct v*(θ) and constraints for reporting
-    v_star = _canonical_contract(theta_opt, cache["s0"], cache["R"], g)
-    cons = _constraints(v_star, cache, k=k, Ubar=float(Ubar))
+    lam_opt, mu_opt, mu_hat_opt = _decode_theta(theta_opt)
+    v_star = _canonical_contract(lam_opt, mu_opt, mu_hat_opt, cache["s0"], cache["R"], g)
+    cons = _constraints(v_star, cache=cache, k=k, Ubar=Ubar)
 
-    # Multipliers
-    lam = float(theta_opt[0])
-    mu = float(theta_opt[1])
-    mu_hat = np.asarray(theta_opt[2:], dtype=np.float64).reshape((m,))
+    # Multipliers (use decoded values)
+    lam = lam_opt
+    mu = mu_opt
+    mu_hat = mu_hat_opt
 
     results = SolveResults(
-        a0=float(a0),
-        Ubar=float(Ubar),
-        a_hat=np.asarray(a_hat, dtype=np.float64),
-        optimal_contract=np.asarray(v_star, dtype=np.float64),
-        expected_wage=float(cons["Ewage"]),
+        a0=a0,
+        Ubar=Ubar,
+        a_hat=a_hat,
+        optimal_contract=v_star,
+        expected_wage=cons["Ewage"],
         multipliers={"lam": lam, "mu": mu, "mu_hat": mu_hat},
         constraints={
-            "U0": float(cons["U0"]),
-            "IR": float(cons["IR"]),
-            "FOC": float(cons["FOC"]),
-            "Uhat": np.asarray(cons["Uhat"], dtype=np.float64),
-            "IC": np.asarray(cons["IC"], dtype=np.float64),
-            "Ewage": float(cons["Ewage"]),
+            "U0": cons["U0"],
+            "IR": cons["IR"],
+            "FOC": cons["FOC"],
+            "Uhat": cons["Uhat"],
+            "IC": cons["IC"],
+            "Ewage": cons["Ewage"],
         },
         solver_state=state,
     )
@@ -235,7 +251,9 @@ def _minimize_cost_iterative(
     
     for iteration in range(n_a_iterations + 1):
         # Set a_hat for this iteration
-        a_hat = np.array([0.0, a_current])
+        # Ensure a_current is a scalar (not numpy array) for array construction
+        a_current_scalar = a_current.item() if isinstance(a_current, np.ndarray) else a_current
+        a_hat = np.array([0.0, a_current_scalar])
         
         # Solve the cost minimization problem
         results, theta_opt = _minimize_cost_a_hat(
@@ -265,17 +283,15 @@ def _minimize_cost_iterative(
             
             # Define negative utility function for maximization
             def neg_utility(a):
-                a_val = float(a)
                 utility = _compute_expected_utility(
                     v=v_optimal,
-                    a=a_val,
+                    a=a,
                     y_grid=y_grid,
                     w=w,
                     f=f,
                     C=C,
                 )
-                # utility should be a scalar for scalar input, but ensure it's a float
-                return -float(utility)
+                return -utility
             
             # Find the action that maximizes utility within the specified bounds
             # Use the provided bounds, but ensure they're reasonable
@@ -294,7 +310,7 @@ def _minimize_cost_iterative(
             )
             
             if opt_result.success:
-                arg_max_a = float(opt_result.x)
+                arg_max_a = opt_result.x
                 
                 # The optimizer now respects bounds, so arg_max_a is already within constraints
                 # Check if arg max is close to a0
@@ -310,13 +326,15 @@ def _minimize_cost_iterative(
                 pass
     
     # Return the final results with consistent structure
-    a_hat = np.array([0.0, a_current])
+    # Ensure a_current is a scalar (not numpy array) for array construction
+    a_current_scalar = a_current.item() if isinstance(a_current, np.ndarray) else a_current
+    a_hat = np.array([0.0, a_current_scalar])
     
     # Create a new SolveResults object with the final a_hat value
     final_results = SolveResults(
         a0=results.a0,
         Ubar=results.Ubar,
-        a_hat=np.asarray(a_hat, dtype=np.float64),
+        a_hat=a_hat,
         optimal_contract=results.optimal_contract,
         expected_wage=results.expected_wage,
         multipliers=results.multipliers,

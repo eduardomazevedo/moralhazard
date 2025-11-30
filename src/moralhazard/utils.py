@@ -47,9 +47,9 @@ def _make_expected_wage_fun(
             if a_hat is None:
                 raise ValueError("a_hat is required when solver='a_hat'")
             results, theta_opt = _minimize_cost_a_hat(
-                float(a),
-                float(Ubar),
-                np.asarray(a_hat, dtype=np.float64),
+                a,
+                Ubar,
+                a_hat,
                 y_grid=y_grid,
                 w=w,
                 f=f,
@@ -63,8 +63,8 @@ def _make_expected_wage_fun(
             )
         else:  # solver == "iterative"
             results, theta_opt = _minimize_cost_iterative(
-                a0=float(a),
-                Ubar=float(Ubar),
+                a0=a,
+                Ubar=Ubar,
                 n_a_iterations=int(n_a_iterations),
                 y_grid=y_grid,
                 w=w,
@@ -87,7 +87,7 @@ def _make_expected_wage_fun(
         # keep attributes in sync
         F.last_theta = last_theta_ref  # type: ignore[attr-defined]
         F.call_count = call_count      # type: ignore[attr-defined]
-        return float(results.expected_wage)
+        return results.expected_wage
 
     def _reset():
         nonlocal last_theta_ref, call_count
@@ -132,8 +132,8 @@ def _solve_principal_problem(
     bounded_ok = np.isfinite(a_min) and np.isfinite(a_max)
 
     def neg_obj(a: float) -> float:
-        rev = float(revenue_function(a))
-        ew  = float(expected_wage_fun(a))
+        rev = revenue_function(a)
+        ew  = expected_wage_fun(a)
         return -(rev - ew)
 
     method = "bounded" if bounded_ok else "brent"
@@ -150,14 +150,14 @@ def _solve_principal_problem(
     outer_state = {
         "method": method,
         "success": bool(getattr(res, "success", True)),
-        "fun_negated": float(getattr(res, "fun", np.nan)),
+        "fun_negated": getattr(res, "fun", np.nan),
         "nfev": int(getattr(res, "nfev", -1)),
         "nit": int(getattr(res, "nit", -1)) if hasattr(res, "nit") else None,
         "message": getattr(res, "message", None),
     }
 
-    opt_a = float(res.x)
-    opt_val = -(float(res.fun))
+    opt_a = res.x
+    opt_val = -res.fun
 
     return {
         "optimal_action": opt_a,

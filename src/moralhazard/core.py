@@ -7,9 +7,9 @@ import numpy as np
 def _make_cache(
     a0: float,
     a_hat: np.ndarray,
+    *,
     y_grid: np.ndarray,
     w: np.ndarray,
-    *,
     f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
     score: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
     C: Callable[[float | np.ndarray], float | np.ndarray],
@@ -30,16 +30,12 @@ def _make_cache(
       - WD_T                   : (m, n) = (w[:,None] * D).T
       - C0, Cprime0, C_hat     : floats / (m,)
     """
-    y_grid = np.asarray(y_grid, dtype=np.float64)
-    w = np.asarray(w, dtype=np.float64)
-    a_hat = np.asarray(a_hat, dtype=np.float64)
-
     # Baseline density and score at a0 on the fixed grid
-    f0 = np.asarray(f(y_grid, float(a0)), dtype=np.float64)           # (n,)
-    s0 = np.asarray(score(y_grid, float(a0)), dtype=np.float64)       # (n,)
+    f0 = f(y_grid, a0)           # (n,)
+    s0 = score(y_grid, a0)       # (n,)
 
     # Density matrix at fixed comparison actions a_hat: (n, m)
-    D = np.asarray(f(y_grid[:, None], a_hat[None, :]), dtype=np.float64)  # (n, m)
+    D = f(y_grid[:, None], a_hat[None, :])  # (n, m)
 
     # Cached weights/products
     wf0 = w * f0
@@ -55,9 +51,9 @@ def _make_cache(
     R = 1.0 - ratio_clipped  # (n, m)
 
     # Precompute C-related terms
-    C0 = float(C(float(a0)))
-    Cprime0 = float(Cprime(float(a0)))
-    C_hat = np.asarray(C(a_hat), dtype=np.float64)  # (m,)
+    C0 = C(a0)
+    Cprime0 = Cprime(a0)
+    C_hat = C(a_hat)  # (m,)
 
     # Precompute weighted D for Uhat integrals: (w[:, None] * D).T @ v
     WD_T = (w[:, None] * D).T  # (m, n)
@@ -77,11 +73,13 @@ def _make_cache(
 
 
 def _canonical_contract(
-    theta: np.ndarray,
+    lam: float,
+    mu: float,
+    mu_hat: np.ndarray,
     s0: np.ndarray,
     R: np.ndarray,
     g: Callable[[np.ndarray], np.ndarray],
-) -> Dict[str, np.ndarray]:
+) -> np.ndarray:
     """
     Canonical contract map v = g(λ + μ s0 + R μ̂).
 
@@ -97,19 +95,15 @@ def _canonical_contract(
     -------
     v : np.ndarray (n,)
     """
-    lam = float(theta[0])
-    mu = float(theta[1])
-    mu_hat = np.asarray(theta[2:], dtype=np.float64)
-
     z = lam + mu * s0 + R @ mu_hat
-    v = np.asarray(g(z), dtype=np.float64)
+    v = g(z)
     return v
 
 
 def _constraints(
     v: np.ndarray,
+    *,    
     cache: Dict[str, Any],
-    *,
     k: Callable[[np.ndarray], np.ndarray],
     Ubar: float,
 ) -> Dict[str, Any]:
@@ -123,12 +117,7 @@ def _constraints(
       - Uhat, IC    : np.ndarray (m,)
       - Ewage       : float
     """
-    v = np.asarray(v, dtype=np.float64)
     wf0 = cache["wf0"]
-    expected = wf0.shape
-    if v.shape != expected:
-        raise ValueError(f"v must have shape {expected}; got {v.shape}")
-
     wf0s0 = cache["wf0s0"]
     WD_T = cache["WD_T"]
     C0 = cache["C0"]
@@ -136,20 +125,20 @@ def _constraints(
     C_hat = cache["C_hat"]
 
     # U0 = ∫ v f0 - C(a0)
-    U0 = float(wf0 @ v - C0)
+    U0 = wf0 @ v - C0
 
     # FOC = ∫ v s0 f0 - C'(a0)
-    FOC = float(wf0s0 @ v - Cprime0)
+    FOC = wf0s0 @ v - Cprime0
 
     # Uhat (m,) and IC = Uhat - U0
-    Uhat = np.asarray(WD_T @ v, dtype=np.float64) - C_hat  # (m,)
+    Uhat = WD_T @ v - C_hat  # (m,)
     IC = Uhat - U0
 
     # IR
-    IR = float(Ubar) - U0
+    IR = Ubar - U0
 
     # Expected wage: ∫ k(v) f0
-    Ewage = float(wf0 @ np.asarray(k(v), dtype=np.float64))
+    Ewage = wf0 @ k(v)
 
     return {"U0": U0, "IR": IR, "FOC": FOC, "Uhat": Uhat, "IC": IC, "Ewage": Ewage}
 
@@ -157,6 +146,7 @@ def _constraints(
 def _compute_expected_utility(
     v: np.ndarray,
     a: float | np.ndarray,
+    *,
     y_grid: np.ndarray,
     w: np.ndarray,
     f: Callable[[np.ndarray, float | np.ndarray], np.ndarray],
@@ -176,15 +166,6 @@ def _compute_expected_utility(
     Returns:
       - scalar if a is scalar; 1D array otherwise
     """
-    # Check input types but don't convert
-    if not isinstance(v, np.ndarray):
-        raise TypeError(f"v must be a numpy array; got {type(v)}")
-    if v.shape != y_grid.shape:
-        raise ValueError(f"v must have shape {y_grid.shape}; got {v.shape}")
-    
-    if not isinstance(a, (float, int, np.ndarray)):
-        raise TypeError(f"a must be scalar or numpy array; got {type(a)}")
-
     # Let NumPy broadcasting handle both scalar and array inputs
     if isinstance(a, np.ndarray) and a.ndim != 1:
         raise ValueError(f"a must be 1D array; got shape {a.shape}")
@@ -195,15 +176,5 @@ def _compute_expected_utility(
     costs = C(a)  # shape (m,) for array a, scalar for scalar a
     result = integrals - costs
     
-    # Ensure consistent return types: scalar for scalar input, array for array input
-    if isinstance(a, (float, int)):
-        # For scalar input, ensure we return a Python scalar, not a 0-dim array
-        if isinstance(result, np.ndarray):
-            if result.size == 1:
-                return float(result.item())
-            else:
-                raise ValueError(f"Expected scalar result for scalar input, got array with {result.size} elements")
-        return float(result)
-    else:
-        # For array input, return numpy array
-        return np.asarray(result, dtype=np.float64)
+    # Return result as-is (numpy scalar for scalar input, array for array input)
+    return result

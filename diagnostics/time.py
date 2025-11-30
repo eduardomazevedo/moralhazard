@@ -68,9 +68,29 @@ for i, (a0, rw) in enumerate(zip(a_list, rw_list), 1):
     times_iterative.append(dt)
     print(f"Run {i:02d}: a={a0:6.2f}, Ubar=u({rw:5.2f})  time={dt:.4f}s")
 
+print("\n=== Timing a_hat solver (empty a_hat) ===")
+a_hat_empty = np.array([])
+times_a_hat_empty = []
+for i, (a0, rw) in enumerate(zip(a_list, rw_list), 1):
+    t0 = time.perf_counter()
+    _ = mhp.solve_cost_minimization_problem(
+        intended_action=float(a0),
+        reservation_utility=float(u(rw)),
+        solver="a_hat",
+        a_hat=a_hat_empty,
+    )
+    t1 = time.perf_counter()
+    dt = t1 - t0
+    times_a_hat_empty.append(dt)
+    print(f"Run {i:02d}: a={a0:6.2f}, Ubar=u({rw:5.2f})  time={dt:.4f}s")
+
 print("\n=== Summary ===")
 print("a_hat solver times (s):", ", ".join(f"{t:.4f}" for t in times_a_hat))
 print(f"a_hat solver mean time (s): {np.mean(times_a_hat):.4f}")
 print("iterative solver times (s):", ", ".join(f"{t:.4f}" for t in times_iterative))
 print(f"iterative solver mean time (s): {np.mean(times_iterative):.4f}")
+print("a_hat solver (empty) times (s):", ", ".join(f"{t:.4f}" for t in times_a_hat_empty))
+print(f"a_hat solver (empty) mean time (s): {np.mean(times_a_hat_empty):.4f}")
 print(f"Speedup (iterative/a_hat): {np.mean(times_iterative)/np.mean(times_a_hat):.2f}x")
+print(f"Speedup (iterative/a_hat_empty): {np.mean(times_iterative)/np.mean(times_a_hat_empty):.2f}x")
+print(f"Speedup (a_hat_empty/a_hat): {np.mean(times_a_hat_empty)/np.mean(times_a_hat):.2f}x")

@@ -35,8 +35,8 @@ def _make_grid(distribution_type: str, computational_params: dict) -> tuple[np.n
         if key not in computational_params:
             raise KeyError(f"computational_params['{key}'] is required")
     
-    y_min = float(computational_params["y_min"])
-    y_max = float(computational_params["y_max"])
+    y_min = computational_params["y_min"]
+    y_max = computational_params["y_max"]
     
     if not (y_max > y_min):
         raise ValueError(f"Require y_max > y_min; got y_min={y_min}, y_max={y_max}")
@@ -52,7 +52,7 @@ def _make_grid(distribution_type: str, computational_params: dict) -> tuple[np.n
             raise ValueError(f"n must be odd for continuous distribution; got {n}")
 
         y_grid = np.linspace(y_min, y_max, n, dtype=np.float64)
-        step = (y_max - y_min) / float(n - 1)
+        step = (y_max - y_min) / (n - 1)
 
         # Simpson weights for an odd-length, evenly spaced grid
         w = np.zeros_like(y_grid, dtype=np.float64)
@@ -67,7 +67,7 @@ def _make_grid(distribution_type: str, computational_params: dict) -> tuple[np.n
         # Validate discrete-specific parameters
         if "step_size" not in computational_params:
             raise KeyError("computational_params['step_size'] is required for discrete distribution")
-        step_size = float(computational_params["step_size"])
+        step_size = computational_params["step_size"]
         
         # Check if step_size perfectly divides y_max - y_min
         total_range = y_max - y_min
