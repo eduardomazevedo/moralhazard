@@ -6,7 +6,8 @@ import numpy as np
 from scipy.optimize import minimize
 
 from .types import DualMaximizerResults, CostMinimizationResults
-from .core import _make_cache, _canonical_contract, _constraints, _agent_best_action
+from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
+from .utils import _maximize_1d_robust
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
@@ -262,12 +263,14 @@ def _minimize_cost_internal(
     iterations = 0
     while iterations < n_a_iterations:
         iterations += 1
-        a_best, utility_best = _agent_best_action(
-            v=results_dual.optimal_contract,
-            a_lb=a_ic_lb,
-            a_ub=a_ic_ub,
-            n_a_grid_points=n_a_grid_points,
-            problem=problem,
+        def objective(a: float | np.ndarray) -> float | np.ndarray:
+            return _compute_expected_utility(results_dual.optimal_contract, a, problem=problem)
+        
+        a_best, utility_best = _maximize_1d_robust(
+            objective=objective,
+            lower_bound=a_ic_lb,
+            upper_bound=a_ic_ub,
+            n_grid_points=n_a_grid_points,
         )
 
         global_ic_violation = utility_best - results_dual.constraints['U0']

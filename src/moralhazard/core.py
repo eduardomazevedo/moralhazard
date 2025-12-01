@@ -6,8 +6,6 @@ import numpy as np
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
 
-from .utils import _maximize_1d_robust
-
 
 def _make_cache(
     a0: float,
@@ -191,29 +189,3 @@ def _compute_expected_utility(
     
     # Return result as-is (numpy scalar for scalar input, array for array input)
     return result
-
-
-def _agent_best_action(
-    v: np.ndarray,
-    a_lb,
-    a_ub,
-    n_a_grid_points,
-    *,
-    problem: "MoralHazardProblem",
-) -> tuple[float, float]:
-    """
-    Find the action that maximizes expected utility within the specified bounds.
-    
-    Returns:
-        tuple[float, float]: A tuple of (best_action, utility_attained)
-    """
-    # Create vectorized objective function (handles both scalar and array inputs)
-    def objective(a: float | np.ndarray) -> float | np.ndarray:
-        return _compute_expected_utility(v, a, problem=problem)
-    
-    return _maximize_1d_robust(
-        objective=objective,
-        lower_bound=a_lb,
-        upper_bound=a_ub,
-        n_grid_points=n_a_grid_points,
-    )
