@@ -11,8 +11,6 @@ from .utils import _make_expected_wage_fun, _solve_principal_problem
 from .core import _compute_expected_utility
 
 
-
-
 class MoralHazardProblem:
     """
     Public entry point.
@@ -181,14 +179,12 @@ class MoralHazardProblem:
     def expected_wage_fun(
         self,
         reservation_utility: float,
-        solver: str = "a_hat",
-        a_hat: np.ndarray | None = None,
+        a_ic_lb: float,
+        a_ic_ub: float,
         n_a_iterations: int = 1,
-        warm_start: bool = True,
+        n_a_grid_points: int = 10,
         clip_ratio: float = 1e6,
-        a_ic_lb: float = -np.inf,
-        a_ic_ub: float = np.inf,
-        a_ic_initial: float = 0.0,
+        a_always_check_global_ic: np.ndarray | None = None,
     ) -> "Callable[[float], float]":
         """
         Returns F(a) = E[w(v*(a))] where v*(a) is the cost-minimizing contract
@@ -196,36 +192,32 @@ class MoralHazardProblem:
 
         Args:
             reservation_utility: The reservation utility Ubar
-            solver: Either "a_hat" (default) or "iterative"
-            a_hat: Required when solver="a_hat". The action grid for the solve.
+            a_ic_lb: Lower bound for action search in iterative solver
+            a_ic_ub: Upper bound for action search in iterative solver
             n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
-            warm_start: When True, successive calls reuse the last θ* found
-                       inside the returned function (does NOT mutate class-level warm start).
+            n_a_grid_points: Number of grid points for the action grid. Defaults to 10.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
-            a_ic_lb: Lower bound for a hat action search when using iterative solver (default: -infinity)
-            a_ic_ub: Upper bound for a hat action search when using iterative solver (default: infinity)
-            a_ic_initial: Initial a hat action value to start search from when using iterative solver (default: 0.0)
+            a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0.0].
 
         Returns:
             Callable function F(a) that returns the expected wage for action a.
         """
-        if solver not in ["a_hat", "iterative"]:
-            raise ValueError(f"solver must be 'a_hat' or 'iterative', got '{solver}'")
-
-        # Entry point: convert a_hat if provided
-        a_hat_arr = np.asarray(a_hat, dtype=np.float64) if a_hat is not None else None
+        # Entry point: convert a_always_check_global_ic if provided
+        a_always_check = (
+            np.asarray(a_always_check_global_ic, dtype=np.float64)
+            if a_always_check_global_ic is not None
+            else np.array([0.0])
+        )
 
         F = _make_expected_wage_fun(
             problem=self,
             Ubar=reservation_utility,
-            solver=solver,
-            a_hat=a_hat_arr,
-            n_a_iterations=int(n_a_iterations),
-            warm_start=bool(warm_start),
-            clip_ratio=clip_ratio,
             a_ic_lb=a_ic_lb,
             a_ic_ub=a_ic_ub,
-            a_ic_initial=a_ic_initial,
+            n_a_iterations=int(n_a_iterations),
+            n_a_grid_points=int(n_a_grid_points),
+            clip_ratio=clip_ratio,
+            a_always_check_global_ic=a_always_check,
         )
 
         return F
@@ -263,14 +255,12 @@ class MoralHazardProblem:
         a_init: float,
         *,
         # options forwarded to expected_wage_fun(...)
-        solver: str = "a_hat",
-        a_hat: np.ndarray | None = None,
+        a_ic_lb: float,
+        a_ic_ub: float,
         n_a_iterations: int = 1,
-        warm_start: bool = True,
+        n_a_grid_points: int = 10,
         clip_ratio: float = 1e6,
-        a_ic_lb: float = -np.inf,
-        a_ic_ub: float = np.inf,
-        a_ic_initial: float = 0.0,
+        a_always_check_global_ic: np.ndarray | None = None,
         # options forwarded to the outer line search
         minimize_scalar_options: dict | None = None,
         # options forwarded to the inner cost-minimization solver call
@@ -285,19 +275,14 @@ class MoralHazardProblem:
         4) Return a PrincipalSolveResults bundle.
         """
         # 1) Construct E[w(a)] using the class' primitives
-        # Entry point: convert a_hat if provided
-        a_hat_arr = np.asarray(a_hat, dtype=np.float64) if a_hat is not None else None
-
         Ew = self.expected_wage_fun(
             reservation_utility=reservation_utility,
-            solver=solver,
-            a_hat=a_hat_arr,
-            n_a_iterations=n_a_iterations,
-            warm_start=warm_start,
-            clip_ratio=clip_ratio,
             a_ic_lb=a_ic_lb,
             a_ic_ub=a_ic_ub,
-            a_ic_initial=a_ic_initial,
+            n_a_iterations=n_a_iterations,
+            n_a_grid_points=n_a_grid_points,
+            clip_ratio=clip_ratio,
+            a_always_check_global_ic=a_always_check_global_ic,
         )
 
         # 2) Outer line search
@@ -315,15 +300,23 @@ class MoralHazardProblem:
         # 3) Inner solve at a*
         # Entry point: convert theta_init if provided
         theta_init_arr = np.asarray(theta_init, dtype=np.float64) if theta_init is not None else None
+        # Entry point: convert a_always_check_global_ic if provided
+        a_always_check = (
+            np.asarray(a_always_check_global_ic, dtype=np.float64)
+            if a_always_check_global_ic is not None
+            else np.array([0.0])
+        )
 
-        inner: CostMinimizationResults = self.solve_cost_minimization_problem(
+        inner = self.solve_cost_minimization_problem(
             intended_action=a_star,
             reservation_utility=reservation_utility,
+            a_ic_lb=a_ic_lb,
+            a_ic_ub=a_ic_ub,
+            n_a_grid_points=n_a_grid_points,
             n_a_iterations=n_a_iterations,
             theta_init=theta_init_arr,
             clip_ratio=clip_ratio,
-            a_ic_lb=a_ic_lb,
-            a_ic_ub=a_ic_ub,
+            a_always_check_global_ic=a_always_check,
         )
 
         # 4) Pack results

@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Callable, Optional, Dict, Any, TYPE_CHECKING
 import numpy as np
 
-from .solver import _maximize_lagrange_dual
-
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
 
@@ -13,75 +11,31 @@ def _make_expected_wage_fun(
     *,
     problem: "MoralHazardProblem",
     Ubar: float,
-    solver: str = "a_hat",
-    a_hat: np.ndarray | None = None,
+    a_ic_lb: float,
+    a_ic_ub: float,
     n_a_iterations: int = 1,
-    warm_start: bool = True,
+    n_a_grid_points: int = 10,
     clip_ratio: float = 1e6,
-    a_ic_lb: float = -np.inf,
-    a_ic_ub: float = np.inf,
-    a_ic_initial: float = 0.0,
+    a_always_check_global_ic: np.ndarray = np.array([0.0]),
 ) -> Callable[[float], float]:
     """
-    Factory returning F(a) = E[w(v*(a))] with an optional warm start across calls.
+    Factory returning F(a) = E[w(v*(a))].
 
-    Attributes on returned callable (kept live across calls):
-      - .last_theta: np.ndarray | None
-      - .call_count: int
-      - .reset(): None
+    Returns a callable that takes an action a and returns the expected wage.
     """
-    last_theta_ref: np.ndarray | None = None
-    call_count = 0
-
-
-    
     def F(a: float) -> float:
-        nonlocal last_theta_ref, call_count
-        theta_init = last_theta_ref if warm_start else None
-        
-        if solver == "a_hat":
-            if a_hat is None:
-                raise ValueError("a_hat is required when solver='a_hat'")
-            results, theta_opt = _minimize_cost_a_hat(
-                a,
-                Ubar,
-                a_hat,
-                problem=problem,
-                theta_init=theta_init,
-                clip_ratio=clip_ratio,
-            )
-        else:  # solver == "iterative"
-            results, theta_opt = _minimize_cost_iterative(
-                a0=a,
-                Ubar=Ubar,
-                problem=problem,
-                n_a_iterations=int(n_a_iterations),
-                theta_init=theta_init,
-                clip_ratio=clip_ratio,
-                a_ic_lb=a_ic_lb,
-                a_ic_ub=a_ic_ub,
-                a_ic_initial=a_ic_initial,
-            )
-        
-        if warm_start:
-            last_theta_ref = theta_opt
-        call_count += 1
-        # keep attributes in sync
-        F.last_theta = last_theta_ref  # type: ignore[attr-defined]
-        F.call_count = call_count      # type: ignore[attr-defined]
+        results = problem.solve_cost_minimization_problem(
+            intended_action=a,
+            reservation_utility=Ubar,
+            a_ic_lb=a_ic_lb,
+            a_ic_ub=a_ic_ub,
+            n_a_grid_points=n_a_grid_points,
+            n_a_iterations=n_a_iterations,
+            clip_ratio=clip_ratio,
+            a_always_check_global_ic=a_always_check_global_ic,
+        )
         return results.expected_wage
 
-    def _reset():
-        nonlocal last_theta_ref, call_count
-        last_theta_ref = None
-        call_count = 0
-        F.last_theta = last_theta_ref  # type: ignore[attr-defined]
-        F.call_count = call_count      # type: ignore[attr-defined]
-
-    # initialize lightweight attributes
-    F.last_theta = last_theta_ref      # type: ignore[attr-defined]
-    F.call_count = call_count          # type: ignore[attr-defined]
-    F.reset = _reset                   # type: ignore[attr-defined]
     return F
 
 

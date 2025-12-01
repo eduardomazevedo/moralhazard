@@ -13,7 +13,7 @@ initial_wealth = 50
 sigma = 10.0
 first_best_effort = 100
 theta = 1.0 / first_best_effort / (first_best_effort + initial_wealth)
-reservation_wages = np.linspace(-1.0, 100.0, 5)
+reservation_wages = np.linspace(-1.0, 10.0, 20)
 
 utility_cfg = make_utility_cfg("log", w0=initial_wealth)
 dist_cfg = make_distribution_cfg("gaussian", sigma=sigma)
