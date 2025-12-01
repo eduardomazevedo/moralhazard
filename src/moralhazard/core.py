@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Dict, Any, Callable, TYPE_CHECKING
 import numpy as np
-from scipy.optimize import minimize_scalar
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
+
+from .utils import _maximize_1d_robust
 
 
 def _make_cache(
@@ -203,71 +204,16 @@ def _agent_best_action(
     """
     Find the action that maximizes expected utility within the specified bounds.
     
-    First performs a grid search to find the best candidate, then optimizes
-    in the two intervals adjacent to that candidate (left and right).
-    
     Returns:
         tuple[float, float]: A tuple of (best_action, utility_attained)
     """
-    # First do a grid search to find the best candidate
-    a_grid = np.linspace(a_lb, a_ub, n_a_grid_points)
-    expected_utilities = _compute_expected_utility(v, a_grid, problem=problem)
-    best_idx = np.argmax(expected_utilities)
-    a_candidate = float(a_grid[best_idx])
-    candidate_utility = float(np.asarray(expected_utilities[best_idx]).item())
+    # Create vectorized objective function (handles both scalar and array inputs)
+    def objective(a: float | np.ndarray) -> float | np.ndarray:
+        return _compute_expected_utility(v, a, problem=problem)
     
-    # Define negative utility function for minimization
-    def neg_utility(a: float) -> float:
-        utility = _compute_expected_utility(v, a, problem=problem)
-        # Extract scalar value properly to avoid deprecation warning
-        return -float(np.asarray(utility).item())
-    
-    # Determine intervals: left (previous grid point to candidate) and right (candidate to next grid point)
-    if best_idx > 0:
-        a_left_bound = float(a_grid[best_idx - 1])
-    else:
-        a_left_bound = a_lb
-    
-    if best_idx < len(a_grid) - 1:
-        a_right_bound = float(a_grid[best_idx + 1])
-    else:
-        a_right_bound = a_ub
-    
-    candidates = [(a_candidate, candidate_utility)]
-    
-    # Optimize in the left interval (previous grid point to candidate)
-    if a_left_bound < a_candidate:
-        try:
-            left_result = minimize_scalar(
-                neg_utility,
-                bounds=(a_left_bound, a_candidate),
-                method='bounded',
-                options={'xatol': 1e-8}
-            )
-            if left_result.success:
-                left_action = left_result.x
-                left_utility = -left_result.fun
-                candidates.append((left_action, left_utility))
-        except (ValueError, RuntimeError):
-            pass
-    
-    # Optimize in the right interval (candidate to next grid point)
-    if a_candidate < a_right_bound:
-        try:
-            right_result = minimize_scalar(
-                neg_utility,
-                bounds=(a_candidate, a_right_bound),
-                method='bounded',
-                options={'xatol': 1e-8}
-            )
-            if right_result.success:
-                right_action = right_result.x
-                right_utility = -right_result.fun
-                candidates.append((right_action, right_utility))
-        except (ValueError, RuntimeError):
-            pass
-    
-    # Find the best candidate from all options
-    best_action, best_utility = max(candidates, key=lambda x: x[1])
-    
-    return best_action, best_utility
+    return _maximize_1d_robust(
+        objective=objective,
+        lower_bound=a_lb,
+        upper_bound=a_ub,
+        n_grid_points=n_a_grid_points,
+    )
