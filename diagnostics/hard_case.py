@@ -55,8 +55,8 @@ a_ic_ub = 130.0
 # --------------------
 # Hard case: w=0, a=4
 # --------------------
-reservation_wage = 0.0
-intended_action = 4.0
+reservation_wage = -1.0
+intended_action = 9.0
 reservation_utility = u_fun(reservation_wage)
 
 print("=" * 80)

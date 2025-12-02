@@ -4,6 +4,7 @@ import time
 from typing import Dict, Any, Tuple, TYPE_CHECKING
 import numpy as np
 from scipy.optimize import minimize
+from scipy.special import softplus, expit
 
 from .types import DualMaximizerResults, CostMinimizationResults
 from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
@@ -110,16 +111,13 @@ def _maximize_lagrange_dual(
     maxiter: int = 1000,
     ftol: float = 1e-8,
     clip_ratio: float = 1e6,
-) -> tuple[SolveResults, np.ndarray]:
+    reparametrize: str | None = None,
+) -> tuple[DualMaximizerResults, np.ndarray]:
     """
     Maximizes the Lagrange dual given a0, Ubar, and a_hat.
-    Typically used as an internal solver.
-
-    Returns:
-      - DualMaximizerResults
-      - theta_opt for warm-starting
     """
-    # Build precomputed cache (no primitives or raw params stored)
+
+    # Build cache
     cache = _make_cache(
         a0,
         a_hat,
@@ -127,55 +125,119 @@ def _maximize_lagrange_dual(
         clip_ratio=clip_ratio,
     )
 
-    # Initialization policy
+    # Initialization
     m = int(cache["R"].shape[1])
     expected_shape = (2 + m,)
     warn_flags: list[str] = []
 
     def _select_x0() -> np.ndarray:
-        # 1) user-provided theta_init
         if theta_init is not None:
             if np.all(np.isfinite(theta_init)):
                 if theta_init.shape == expected_shape:
                     return theta_init
                 else:
-                    # Try to pad/truncate to match expected shape
-                    # This allows warm starting lam and mu from an empty a_hat solve
                     padded = _pad_theta_for_warm_start(theta_init, m)
                     if padded.shape == expected_shape:
                         warn_flags.append("theta_init_shape_mismatch_padded")
                         return padded
             warn_flags.append("theta_init_shape_mismatch_or_nonfinite")
-
-        # 2) default
         return np.zeros(expected_shape, dtype=np.float64)
 
     x0 = _select_x0()
 
-    # Bounds: lam ∈ [0, ∞), mu ∈ (-∞, ∞), each mu_hat[j] ∈ [0, ∞)
-    bounds = [(0.0, None)] + [(None, None)] + [(0.0, None)] * m
-    # For relaxed problem, we know optimal mu is positive.
-    if m == 0:
-        bounds = [(0.0, None)] + [(0.0, None)]
+    # Helper transforms
+    def _id(x): 
+        return x
+
+    # Improved softplus inverse
+    def _softplus_inv(y):
+        y = np.maximum(y, 1e-12)        # <- improvement #2
+        return np.log(np.expm1(y))
+
+    # Setup reparametrization
+    if reparametrize is None:
+        f = f_inv = _id
+        f_prime = lambda x: np.ones_like(x)
+        use_reparam = False
+
+    elif reparametrize == "log":
+        f  = lambda x: np.exp(x)
+        f_inv = lambda y: np.log(y)
+        f_prime = lambda x: np.exp(x)
+        use_reparam = True
+
+    elif reparametrize == "softplus":
+        f  = softplus
+        f_inv = _softplus_inv
+        f_prime = expit
+        use_reparam = True
+
+    else:
+        raise ValueError("Invalid reparametrize option.")
+
+    # indices where positivity enforced
+    idx_pos = [0] + list(range(2, 2 + m))
+
+    if use_reparam:
+        # Construct φ0 from θ0 with safe handling of zeros/negatives
+        phi0 = x0.copy()
+
+        # --- CHANGE #1: ensure theta > 0 before applying f_inv
+        theta_safe = phi0[idx_pos].copy()
+        bad = (~np.isfinite(theta_safe)) | (theta_safe <= 0)
+        if np.any(bad):
+            theta_safe[bad] = 1e-2  # treat zeros / negatives as tiny positive
+        phi0[idx_pos] = f_inv(theta_safe)
+        # ---------------------------------------------------------
+
+        def _wrapped(phi, cache, problem, Ubar):
+            theta = phi.copy()
+            theta[idx_pos] = f(theta[idx_pos])
+            val, g = _dual_value_and_grad(theta, cache, problem, Ubar)
+            g2 = g.copy()
+            g2[idx_pos] *= f_prime(phi[idx_pos])
+            return val, g2
+
+        fun = _wrapped
+        x0_used = phi0
+        method_used = "BFGS"
+        bounds_used = None
+
+    else:
+        fun = _dual_value_and_grad
+        x0_used = x0
+        method_used = "L-BFGS-B"
+        bounds_used = [(0.0, None)] + [(None, None)] + [(0.0, None)] * m
 
     # Solve
+    minimize_kwargs = {
+        "fun": fun,
+        "x0": x0_used,
+        "jac": True,
+        "method": method_used,
+        "options": {"maxiter": int(maxiter), "ftol": ftol},
+        "args": (cache, problem, Ubar),
+    }
+    if bounds_used is not None:
+        minimize_kwargs["bounds"] = bounds_used
+
     t0 = time.time()
-    res = minimize(
-        fun=_dual_value_and_grad,
-        x0=x0,
-        jac=True,
-        method="L-BFGS-B",
-        bounds=bounds,
-        options={"maxiter": int(maxiter), "ftol": ftol},
-        args=(cache, problem, Ubar),
-    )
+    res = minimize(**minimize_kwargs)
     t1 = time.time()
 
-    theta_opt = res.x
-    grad_norm = np.linalg.norm(res.jac) if hasattr(res, "jac") and res.jac is not None else None
+    # Convert φ → θ for output
+    theta_opt = res.x.copy()
+    if use_reparam:
+        theta_opt[idx_pos] = f(theta_opt[idx_pos])
+
+    grad_norm = (
+        np.linalg.norm(res.jac)
+        if hasattr(res, "jac") and res.jac is not None
+        else None
+    )
 
     state = {
-        "method": "L-BFGS-B",
+        "method": method_used,
         "success": bool(res.success),
         "status": int(res.status),
         "message": str(res.message),
@@ -183,31 +245,18 @@ def _maximize_lagrange_dual(
         "nfev": int(getattr(res, "nfev", -1)) if hasattr(res, "nfev") else None,
         "njev": int(getattr(res, "njev", -1)) if hasattr(res, "njev") else None,
         "time_sec": t1 - t0,
-        "fun": res.fun,      # minimized value: -g_dual
+        "fun": res.fun,
         "grad_norm": grad_norm,
     }
     if warn_flags:
         state["warn_flags"] = warn_flags
 
-    if not res.success:
-        if res.x[0] == 0:
-            warn_flags.append("Scipy minimize failed with lambda = 0. It is likely to be a boundary solution so continuing.")
-        elif np.all(res.x <= 1e-2):
-            warn_flags.append("Scipy minimize failed with x <= 1e-2. Seems like weird case close to boundary solution and where mu < 0 is needed to solve FOC even though this is theoretically impossible.")
-        else:
-            print("Problem case results")
-            print(res)
-            raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
-
-    # Reconstruct v*(θ) and constraints for reporting
+    # Decode & evaluate
     lam_opt, mu_opt, mu_hat_opt = _decode_theta(theta_opt)
-    v_star = _canonical_contract(lam_opt, mu_opt, mu_hat_opt, cache["s0"], cache["R"], problem)
+    v_star = _canonical_contract(
+        lam_opt, mu_opt, mu_hat_opt, cache["s0"], cache["R"], problem
+    )
     cons = _constraints(v_star, cache=cache, problem=problem, Ubar=Ubar)
-
-    # Multipliers (use decoded values)
-    lam = lam_opt
-    mu = mu_opt
-    mu_hat = mu_hat_opt
 
     results = DualMaximizerResults(
         a0=a0,
@@ -215,7 +264,7 @@ def _maximize_lagrange_dual(
         a_hat=a_hat,
         optimal_contract=v_star,
         expected_wage=cons["Ewage"],
-        multipliers={"lam": lam, "mu": mu, "mu_hat": mu_hat},
+        multipliers={"lam": lam_opt, "mu": mu_opt, "mu_hat": mu_hat_opt},
         constraints={
             "U0": cons["U0"],
             "IR": cons["IR"],
@@ -226,7 +275,43 @@ def _maximize_lagrange_dual(
         },
         solver_state=state,
     )
+
     return results, theta_opt
+
+
+def _maximize_lagrange_dual_with_fallback(
+    a0: float,
+    Ubar: float,
+    a_hat: np.ndarray,
+    *,
+    problem: "MoralHazardProblem",
+    theta_init: np.ndarray | None = None,
+    maxiter: int = 1000,
+    ftol: float = 1e-8,
+    clip_ratio: float = 1e6,
+    reparametrize_pecking_order: list[str] = [None, "softplus", "log"],
+) -> tuple[DualMaximizerResults, np.ndarray]:
+    """
+    Maximizes the Lagrange dual given a0, Ubar, and a_hat.
+    Simple wrapper to handle fallbacks if the solver fails.
+    """
+    for reparametrize in reparametrize_pecking_order:
+        try:
+            return _maximize_lagrange_dual(
+                a0=a0,
+                Ubar=Ubar,
+                a_hat=a_hat,
+                problem=problem,
+                theta_init=theta_init,
+                maxiter=maxiter,
+                ftol=ftol,
+                clip_ratio=clip_ratio,
+                reparametrize=reparametrize,
+            )
+        except RuntimeError:
+            continue
+    raise RuntimeError("Failed to solve Lagrange dual with any reparametrization.")
+
 
 
 def _minimize_cost_internal(
@@ -240,7 +325,7 @@ def _minimize_cost_internal(
     a_ic_lb: float = 0,
     a_ic_ub: float = np.inf,
     n_a_grid_points: int = 10,
-    a_always_check_global_ic: np.ndarray = np.array([0.0])
+    a_always_check_global_ic: np.ndarray = np.array([0.0]),
 ) -> CostMinimizationResults:
     """
     Internal method to solve cost minimization problem. Calls maximize_lagrange_dual as needed.
@@ -255,7 +340,7 @@ def _minimize_cost_internal(
     best_action_trace: list[float] = []
     
     # Solve relaxed problem
-    results_dual, theta_optimal = _maximize_lagrange_dual(
+    results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(
         a0=intended_action,
         Ubar=reservation_utility,
         a_hat=np.array([], dtype=np.float64),
@@ -293,7 +378,7 @@ def _minimize_cost_internal(
 
         if global_ic_violation > 1e-6 and best_action_distance > 1e-6:
             a_hat = np.concatenate([a_always_check_global_ic, np.array([a_best])])
-            results_dual, theta_optimal = _maximize_lagrange_dual(
+            results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(
                 a0=intended_action,
                 Ubar=reservation_utility,
                 a_hat=a_hat,
