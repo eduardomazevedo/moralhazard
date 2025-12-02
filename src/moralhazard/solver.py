@@ -6,7 +6,8 @@ import numpy as np
 from scipy.optimize import minimize
 
 from .types import DualMaximizerResults, CostMinimizationResults
-from .core import _make_cache, _canonical_contract, _constraints, _agent_best_action
+from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
+from .utils import _maximize_1d_robust
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
@@ -153,6 +154,9 @@ def _maximize_lagrange_dual(
 
     # Bounds: lam ∈ [0, ∞), mu ∈ (-∞, ∞), each mu_hat[j] ∈ [0, ∞)
     bounds = [(0.0, None)] + [(None, None)] + [(0.0, None)] * m
+    # For relaxed problem, we know optimal mu is positive.
+    if m == 0:
+        bounds = [(0.0, None)] + [(0.0, None)]
 
     # Solve
     t0 = time.time()
@@ -186,7 +190,14 @@ def _maximize_lagrange_dual(
         state["warn_flags"] = warn_flags
 
     if not res.success:
-        raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
+        if res.x[0] == 0:
+            warn_flags.append("Scipy minimize failed with lambda = 0. It is likely to be a boundary solution so continuing.")
+        elif np.all(res.x <= 1e-2):
+            warn_flags.append("Scipy minimize failed with x <= 1e-2. Seems like weird case close to boundary solution and where mu < 0 is needed to solve FOC even though this is theoretically impossible.")
+        else:
+            print("Problem case results")
+            print(res)
+            raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
 
     # Reconstruct v*(θ) and constraints for reporting
     lam_opt, mu_opt, mu_hat_opt = _decode_theta(theta_opt)
@@ -262,12 +273,14 @@ def _minimize_cost_internal(
     iterations = 0
     while iterations < n_a_iterations:
         iterations += 1
-        a_best, utility_best = _agent_best_action(
-            v=results_dual.optimal_contract,
-            a_lb=a_ic_lb,
-            a_ub=a_ic_ub,
-            n_a_grid_points=n_a_grid_points,
-            problem=problem,
+        def objective(a: float | np.ndarray) -> float | np.ndarray:
+            return _compute_expected_utility(results_dual.optimal_contract, a, problem=problem)
+        
+        a_best, utility_best = _maximize_1d_robust(
+            objective=objective,
+            lower_bound=a_ic_lb,
+            upper_bound=a_ic_ub,
+            n_grid_points=n_a_grid_points,
         )
 
         global_ic_violation = utility_best - results_dual.constraints['U0']
