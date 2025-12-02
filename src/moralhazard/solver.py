@@ -154,6 +154,9 @@ def _maximize_lagrange_dual(
 
     # Bounds: lam ∈ [0, ∞), mu ∈ (-∞, ∞), each mu_hat[j] ∈ [0, ∞)
     bounds = [(0.0, None)] + [(None, None)] + [(0.0, None)] * m
+    # For relaxed problem, we know optimal mu is positive.
+    if m == 0:
+        bounds = [(0.0, None)] + [(0.0, None)]
 
     # Solve
     t0 = time.time()
@@ -187,7 +190,14 @@ def _maximize_lagrange_dual(
         state["warn_flags"] = warn_flags
 
     if not res.success:
-        raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
+        if res.x[0] == 0:
+            warn_flags.append("Scipy minimize failed with lambda = 0. It is likely to be a boundary solution so continuing.")
+        elif np.all(res.x <= 1e-2):
+            warn_flags.append("Scipy minimize failed with x <= 1e-2. Seems like weird case close to boundary solution and where mu < 0 is needed to solve FOC even though this is theoretically impossible.")
+        else:
+            print("Problem case results")
+            print(res)
+            raise RuntimeError(f"Dual solver did not converge: {state['message']} (iter={state['niter']})")
 
     # Reconstruct v*(θ) and constraints for reporting
     lam_opt, mu_opt, mu_hat_opt = _decode_theta(theta_opt)

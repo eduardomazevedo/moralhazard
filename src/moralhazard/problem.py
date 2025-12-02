@@ -7,7 +7,7 @@ import numpy as np
 from .types import CostMinimizationResults, PrincipalSolveResults
 from .grids import _make_grid
 from .solver import _minimize_cost_internal
-from .utils import _make_expected_wage_fun, _solve_principal_problem
+from .utils import _solve_principal_problem
 from .core import _compute_expected_utility
 
 
@@ -149,7 +149,7 @@ class MoralHazardProblem:
         Args:
             intended_action: The intended action a0
             reservation_utility: The reservation utility Ubar
-            n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 1. Set to 0 to solve the relaxed problem with no global IC constraints.
             theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
             a_ic_lb: Lower bound for action search when using iterative solver (default: 0)
@@ -176,51 +176,74 @@ class MoralHazardProblem:
 
         return results
 
-    def expected_wage_fun(
+    def minimum_cost(
         self,
+        intended_action: float | np.ndarray,
         reservation_utility: float,
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_iterations: int = 1,
         n_a_grid_points: int = 10,
+        n_a_iterations: int = 1,
+        theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
-        a_always_check_global_ic: np.ndarray | None = None,
-    ) -> "Callable[[float], float]":
+        a_always_check_global_ic: np.ndarray = np.array([0.0]),
+    ) -> float | np.ndarray:
         """
-        Returns F(a) = E[w(v*(a))] where v*(a) is the cost-minimizing contract
-        at intended action a for the provided Ū and solver parameters.
-
+        Compute the minimum expected wage E[w(v*(a))] for given action(s).
+        
         Args:
+            intended_action: Action(s) to evaluate. Can be a float or numpy array of any shape.
             reservation_utility: The reservation utility Ubar
             a_ic_lb: Lower bound for action search in iterative solver
             a_ic_ub: Upper bound for action search in iterative solver
-            n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
             n_a_grid_points: Number of grid points for the action grid. Defaults to 10.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
+            theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
             a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0.0].
 
         Returns:
-            Callable function F(a) that returns the expected wage for action a.
+            Expected wage (float if action is float, numpy array with same shape if action is array).
         """
-        # Entry point: convert a_always_check_global_ic if provided
-        a_always_check = (
-            np.asarray(a_always_check_global_ic, dtype=np.float64)
-            if a_always_check_global_ic is not None
-            else np.array([0.0])
-        )
-
-        F = _make_expected_wage_fun(
-            problem=self,
-            Ubar=reservation_utility,
-            a_ic_lb=a_ic_lb,
-            a_ic_ub=a_ic_ub,
-            n_a_iterations=int(n_a_iterations),
-            n_a_grid_points=int(n_a_grid_points),
-            clip_ratio=clip_ratio,
-            a_always_check_global_ic=a_always_check,
-        )
-
-        return F
+        # Handle scalar vs array input
+        is_scalar = isinstance(intended_action, (float, int))
+        if is_scalar:
+            result = self.solve_cost_minimization_problem(
+                intended_action=float(intended_action),
+                reservation_utility=reservation_utility,
+                a_ic_lb=a_ic_lb,
+                a_ic_ub=a_ic_ub,
+                n_a_grid_points=n_a_grid_points,
+                n_a_iterations=n_a_iterations,
+                theta_init=theta_init,
+                clip_ratio=clip_ratio,
+                a_always_check_global_ic=a_always_check_global_ic,
+            ).expected_wage
+            return float(result)
+        
+        # Array input: flatten, compute, then reshape
+        actions = np.asarray(intended_action, dtype=np.float64)
+        original_shape = actions.shape
+        actions_flat = actions.flatten()
+        
+        # Compute expected wage for each action
+        expected_wages_flat = np.array([
+            self.solve_cost_minimization_problem(
+                intended_action=float(a),
+                reservation_utility=reservation_utility,
+                a_ic_lb=a_ic_lb,
+                a_ic_ub=a_ic_ub,
+                n_a_grid_points=n_a_grid_points,
+                n_a_iterations=n_a_iterations,
+                theta_init=theta_init,
+                clip_ratio=clip_ratio,
+                a_always_check_global_ic=a_always_check_global_ic,
+            ).expected_wage
+            for a in actions_flat
+        ])
+        
+        # Reshape to original shape
+        return expected_wages_flat.reshape(original_shape)
 
     def U(self, v: np.ndarray, a: float | np.ndarray) -> float | np.ndarray:
         """
@@ -274,16 +297,18 @@ class MoralHazardProblem:
         3) Solve the inner cost-minimization problem at the optimal action.
         4) Return a PrincipalSolveResults bundle.
         """
-        # 1) Construct E[w(a)] using the class' primitives
-        Ew = self.expected_wage_fun(
-            reservation_utility=reservation_utility,
-            a_ic_lb=a_ic_lb,
-            a_ic_ub=a_ic_ub,
-            n_a_iterations=n_a_iterations,
-            n_a_grid_points=n_a_grid_points,
-            clip_ratio=clip_ratio,
-            a_always_check_global_ic=a_always_check_global_ic,
-        )
+        # 1) Construct E[w(a)] wrapper function using minimum_cost
+        def Ew(a: float) -> float:
+            return self.minimum_cost(
+                action=a,
+                reservation_utility=reservation_utility,
+                a_ic_lb=a_ic_lb,
+                a_ic_ub=a_ic_ub,
+                n_a_iterations=n_a_iterations,
+                n_a_grid_points=n_a_grid_points,
+                clip_ratio=clip_ratio,
+                a_always_check_global_ic=a_always_check_global_ic,
+            )
 
         # 2) Outer line search
         outer = _solve_principal_problem(
