@@ -300,7 +300,7 @@ class MoralHazardProblem:
 
         # 2) Outer line search      
         results_outer = minimize_scalar(
-            fun=Ew,
+            fun=lambda a: Ew(a) - revenue_function(a),
             bounds=(a_min, a_max),
             method='bounded',
             options=minimize_scalar_options,
