@@ -318,7 +318,7 @@ def _minimize_cost_internal(
     reservation_utility: float,
     *,
     problem: "MoralHazardProblem",
-    n_a_iterations: int = 1,
+    n_a_iterations: int = 10,
     theta_init: np.ndarray | None = None,
     clip_ratio: float = 1e6,
     a_ic_lb: float = 0,

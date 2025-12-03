@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Dict, Any, Callable
 import numpy as np
+from scipy.optimize import minimize_scalar
 
 from .types import CostMinimizationResults, PrincipalSolveResults
 from .grids import _make_grid
 from .solver import _minimize_cost_internal
-from .utils import _solve_principal_problem
 from .core import _compute_expected_utility
 
 
@@ -137,7 +137,7 @@ class MoralHazardProblem:
         reservation_utility: float,
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_iterations: int = 1,
+        n_a_iterations: int = 10,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
         a_always_check_global_ic: np.ndarray = np.array([0.0])
@@ -148,7 +148,7 @@ class MoralHazardProblem:
         Args:
             intended_action: The intended action a0
             reservation_utility: The reservation utility Ubar
-            n_a_iterations: Number of iterations for iterative solver. Defaults to 1. Set to 0 to solve the relaxed problem with no global IC constraints.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 10. Set to 0 to solve the relaxed problem with no global IC constraints.
             theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
             a_ic_lb: Lower bound for action search when using iterative solver (default: 0)
@@ -179,7 +179,7 @@ class MoralHazardProblem:
         reservation_utility: float,
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_iterations: int = 1,
+        n_a_iterations: int = 10,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
         a_always_check_global_ic: np.ndarray = np.array([0.0]),
@@ -192,7 +192,7 @@ class MoralHazardProblem:
             reservation_utility: The reservation utility Ubar
             a_ic_lb: Lower bound for action search in iterative solver
             a_ic_ub: Upper bound for action search in iterative solver
-            n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 10.
             theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
             a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0.0].
@@ -268,18 +268,15 @@ class MoralHazardProblem:
         reservation_utility: float,
         a_min: float,
         a_max: float,
-        a_init: float,
         *,
         # options forwarded to expected_wage_fun(...)
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_iterations: int = 1,
+        n_a_iterations: int = 10,
         clip_ratio: float = 1e6,
-        a_always_check_global_ic: np.ndarray | None = None,
+        a_always_check_global_ic: np.ndarray = np.array([0.0]),
         # options forwarded to the outer line search
         minimize_scalar_options: dict | None = None,
-        # options forwarded to the inner cost-minimization solver call
-        theta_init: np.ndarray | None = None,
     ) -> PrincipalSolveResults:
         """
         Public API: principal's outer problem via line search over actions.
@@ -292,7 +289,7 @@ class MoralHazardProblem:
         # 1) Construct E[w(a)] wrapper function using minimum_cost
         def Ew(a: float) -> float:
             return self.minimum_cost(
-                action=a,
+                intended_action=a,
                 reservation_utility=reservation_utility,
                 a_ic_lb=a_ic_lb,
                 a_ic_ub=a_ic_ub,
@@ -301,52 +298,30 @@ class MoralHazardProblem:
                 a_always_check_global_ic=a_always_check_global_ic,
             )
 
-        # 2) Outer line search
-        outer = _solve_principal_problem(
-            revenue_function=revenue_function,
-            expected_wage_fun=Ew,
-            a_min=a_min,
-            a_max=a_max,
-            a_init=a_init,
-            minimize_scalar_options=minimize_scalar_options,
+        # 2) Outer line search      
+        results_outer = minimize_scalar(
+            fun=Ew,
+            bounds=(a_min, a_max),
+            method='bounded',
+            options=minimize_scalar_options,
         )
-        a_star = outer["optimal_action"]
-        profit = outer["profit"]
+        a_star = results_outer.x
+        profit = -results_outer.fun
 
         # 3) Inner solve at a*
-        # Entry point: convert theta_init if provided
-        theta_init_arr = np.asarray(theta_init, dtype=np.float64) if theta_init is not None else None
-        # Entry point: convert a_always_check_global_ic if provided
-        a_always_check = (
-            np.asarray(a_always_check_global_ic, dtype=np.float64)
-            if a_always_check_global_ic is not None
-            else np.array([0.0])
-        )
-
-        inner = self.solve_cost_minimization_problem(
+        results_inner = self.solve_cost_minimization_problem(
             intended_action=a_star,
             reservation_utility=reservation_utility,
             a_ic_lb=a_ic_lb,
             a_ic_ub=a_ic_ub,
             n_a_iterations=n_a_iterations,
-            theta_init=theta_init_arr,
             clip_ratio=clip_ratio,
-            a_always_check_global_ic=a_always_check,
+            a_always_check_global_ic=a_always_check_global_ic,
         )
 
         # 4) Pack results
         return PrincipalSolveResults(
-            a_min=a_min,
-            a_max=a_max,
-            a_init=a_init,
-            revenue_function=revenue_function,
-            Ubar=reservation_utility,
             profit=profit,
             optimal_action=a_star,
-            a_hat=inner.a_hat,
-            optimal_contract=inner.optimal_contract,
-            multipliers=inner.multipliers,
-            constraints=inner.constraints,
-            solver_state_outer=outer["outer_solver_state"],
-            solver_state_inner=inner.solver_state,
+            cmp_result=results_inner,
         )

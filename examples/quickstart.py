@@ -58,18 +58,27 @@ cfg_alt = {
     "computational_params": cfg["computational_params"],
 }
 
-# ---- solve once ----
+# ---- cost minimization problem ----
 mhp = MoralHazardProblem(cfg)
 results = mhp.solve_cost_minimization_problem(
     intended_action=80.0,
     reservation_utility=reservation_utility,
     a_ic_lb=0.0,
-    a_ic_ub=100.0,
-    n_a_iterations=10
+    a_ic_ub=100.0
 )
 
 print("Cost minimization problem results:")
 print(results)
-print("Multipliers found:")
-print(results.multipliers)
 
+# ---- principal problem ----
+results_principal = mhp.solve_principal_problem(
+    revenue_function=lambda a: a,
+    reservation_utility=reservation_utility,
+    a_min=0.0,
+    a_max=100.0,
+    a_ic_lb=0.0,
+    a_ic_ub=100.0
+)
+
+print("Principal problem results:")
+print(results_principal)

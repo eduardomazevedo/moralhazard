@@ -86,31 +86,13 @@ class PrincipalSolveResults:
     """
     Immutable container for the principal's outer problem.
 
-    - a_min, a_max, a_init        : action search bounds and initializer
-    - revenue_function            : reference to the revenue function
-    - Ubar                        : reservation utility
     - profit                      : profit at optimal action
     - optimal_action              : argmax a*
-    - a_hat                       : action grid used by the inner cost-minimization solve (if any)
-    - optimal_contract            : v*(y) from the inner solve at a*
-    - multipliers                 : dual multipliers from inner solve
-    - constraints                 : constraint diagnostics from inner solve
-    - solver_state_outer          : metadata from the line search (minimize_scalar)
-    - solver_state_inner          : metadata from the inner cost-minimization solve
+    - cmp_result                  : CostMinimizationResults from the inner solve at optimal action
     """
-    a_min: float
-    a_max: float
-    a_init: float
-    revenue_function: Callable[[float], float]
-    Ubar: float
     profit: float
     optimal_action: float
-    a_hat: Optional[np.ndarray]
-    optimal_contract: np.ndarray
-    multipliers: Dict[str, Any]
-    constraints: Dict[str, Any]
-    solver_state_outer: Dict[str, Any]
-    solver_state_inner: Dict[str, Any]
+    cmp_result: CostMinimizationResults
 
     def __repr__(self):
         data = _clean(asdict(self))
