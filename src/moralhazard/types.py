@@ -22,6 +22,29 @@ def _clean(obj):
     return obj
 
 
+def _summarize_array(arr: np.ndarray, max_elements: int = 10) -> str:
+    """Summarize a numpy array for pretty printing."""
+    if arr.size <= max_elements:
+        return str(arr.tolist())
+    return f"array(shape={arr.shape}, dtype={arr.dtype}, min={arr.min():.6f}, max={arr.max():.6f}, mean={arr.mean():.6f})"
+
+
+def _summarize_arrays_recursive(obj, max_elements: int = 10, key: str = None):
+    """Recursively summarize numpy arrays named 'optimal_contract' in nested data structures."""
+    if isinstance(obj, np.ndarray):
+        # Only summarize if this is an optimal_contract array
+        if key == "optimal_contract":
+            return _summarize_array(obj, max_elements)
+        return obj
+    elif isinstance(obj, dict):
+        return {k: _summarize_arrays_recursive(v, max_elements, key=k) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        t = type(obj)
+        return t(_summarize_arrays_recursive(x, max_elements, key=key) for x in obj)
+    else:
+        return obj
+
+
 # ----------------------------------------------------------------------
 # Dataclasses
 # ----------------------------------------------------------------------
@@ -47,6 +70,8 @@ class DualMaximizerResults:
 
     def __repr__(self):
         data = _clean(asdict(self))
+        # Summarize large arrays recursively for better readability
+        data = _summarize_arrays_recursive(data)
         return f"{self.__class__.__name__}(\n{pformat(data, indent=4)}\n)"
 
 
@@ -55,11 +80,9 @@ class CostMinimizationResults:
     """
     Immutable container for the cost minimization results. Same as for the ahat solver, but with iterations information.
     """
-    a0: float
-    Ubar: float
-    a_hat: np.ndarray
     optimal_contract: np.ndarray
     expected_wage: float
+    a_hat: np.ndarray
     multipliers: dict
     constraints: dict
     solver_state: dict
@@ -72,6 +95,8 @@ class CostMinimizationResults:
 
     def __repr__(self):
         data = _clean(asdict(self))
+        # Summarize large arrays recursively for better readability
+        data = _summarize_arrays_recursive(data)
         return f"{self.__class__.__name__}(\n{pformat(data, indent=4)}\n)"
 
 
@@ -90,4 +115,6 @@ class PrincipalSolveResults:
 
     def __repr__(self):
         data = _clean(asdict(self))
+        # Summarize large arrays recursively for better readability
+        data = _summarize_arrays_recursive(data)
         return f"{self.__class__.__name__}(\n{pformat(data, indent=4)}\n)"

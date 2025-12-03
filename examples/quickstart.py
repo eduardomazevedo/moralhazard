@@ -77,7 +77,7 @@ results_principal = mhp.solve_principal_problem(
     a_min=0.0,
     a_max=100.0,
     a_ic_lb=0.0,
-    a_ic_ub=100.0
+    a_ic_ub=150.0
 )
 
 print("Principal problem results:")

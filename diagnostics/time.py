@@ -73,3 +73,23 @@ for i in range(n_a_iterations):
     print(f"Iteration {i:02d}: time={dt:.4f}s")
 
 print(f"Cost minimization relaxed problem mean time (s): {np.mean(times_cost_minimization):.4f}")
+
+
+print("=== Timing principal problem ===")
+times_principal = []
+for i in range(n_a_iterations):
+    t0 = time.perf_counter()
+    _ = mhp.solve_principal_problem(
+        revenue_function=lambda a: a,
+        reservation_utility=reservation_utility,
+        a_min=0.0,
+        a_max=100.0,
+        a_ic_lb=a_ic_lb,
+        a_ic_ub=a_ic_ub,
+    )
+    t1 = time.perf_counter()
+    dt = t1 - t0
+    times_principal.append(dt)
+    print(f"Iteration {i:02d}: time={dt:.4f}s")
+
+print(f"Principal problem mean time (s): {np.mean(times_principal):.4f}")

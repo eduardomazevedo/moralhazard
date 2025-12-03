@@ -168,8 +168,6 @@ if problem_cases:
         # Print full results
         results = case["results"]
         print("  Full solve results:")
-        print(f"    a0 (intended action): {results.a0}")
-        print(f"    Ubar (reservation utility): {results.Ubar}")
         print(f"    a_hat: {results.a_hat}")
         print(f"    Expected wage: {results.expected_wage:.6f}")
         print(f"    Multipliers:")

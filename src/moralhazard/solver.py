@@ -394,11 +394,9 @@ def _minimize_cost_internal(
 
     # Build CostMinimizationResults with traces
     cost_results = CostMinimizationResults(
-        a0=intended_action,
-        Ubar=reservation_utility,
-        a_hat=a_hat,
         optimal_contract=results_dual.optimal_contract,
         expected_wage=results_dual.expected_wage,
+        a_hat=a_hat,
         multipliers=results_dual.multipliers,
         constraints=results_dual.constraints,
         solver_state=results_dual.solver_state,
