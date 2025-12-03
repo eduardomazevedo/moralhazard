@@ -137,7 +137,6 @@ class MoralHazardProblem:
         reservation_utility: float,
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_grid_points: int = 10,
         n_a_iterations: int = 1,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
@@ -154,7 +153,6 @@ class MoralHazardProblem:
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
             a_ic_lb: Lower bound for action search when using iterative solver (default: 0)
             a_ic_ub: Upper bound for action search when using iterative solver (default: infinity)
-            n_a_grid_points: Number of grid points for the action grid. Defaults to 10.
             a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0].
 
         Returns:
@@ -170,7 +168,6 @@ class MoralHazardProblem:
             clip_ratio=clip_ratio,
             a_ic_lb=a_ic_lb,
             a_ic_ub=a_ic_ub,
-            n_a_grid_points=n_a_grid_points,
             a_always_check_global_ic=a_always_check_global_ic,
         )
 
@@ -182,7 +179,6 @@ class MoralHazardProblem:
         reservation_utility: float,
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_grid_points: int = 10,
         n_a_iterations: int = 1,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
@@ -196,7 +192,6 @@ class MoralHazardProblem:
             reservation_utility: The reservation utility Ubar
             a_ic_lb: Lower bound for action search in iterative solver
             a_ic_ub: Upper bound for action search in iterative solver
-            n_a_grid_points: Number of grid points for the action grid. Defaults to 10.
             n_a_iterations: Number of iterations for iterative solver. Defaults to 1.
             theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
@@ -213,7 +208,6 @@ class MoralHazardProblem:
                 reservation_utility=reservation_utility,
                 a_ic_lb=a_ic_lb,
                 a_ic_ub=a_ic_ub,
-                n_a_grid_points=n_a_grid_points,
                 n_a_iterations=n_a_iterations,
                 theta_init=theta_init,
                 clip_ratio=clip_ratio,
@@ -233,7 +227,6 @@ class MoralHazardProblem:
                 reservation_utility=reservation_utility,
                 a_ic_lb=a_ic_lb,
                 a_ic_ub=a_ic_ub,
-                n_a_grid_points=n_a_grid_points,
                 n_a_iterations=n_a_iterations,
                 theta_init=theta_init,
                 clip_ratio=clip_ratio,
@@ -281,7 +274,6 @@ class MoralHazardProblem:
         a_ic_lb: float,
         a_ic_ub: float,
         n_a_iterations: int = 1,
-        n_a_grid_points: int = 10,
         clip_ratio: float = 1e6,
         a_always_check_global_ic: np.ndarray | None = None,
         # options forwarded to the outer line search
@@ -305,7 +297,6 @@ class MoralHazardProblem:
                 a_ic_lb=a_ic_lb,
                 a_ic_ub=a_ic_ub,
                 n_a_iterations=n_a_iterations,
-                n_a_grid_points=n_a_grid_points,
                 clip_ratio=clip_ratio,
                 a_always_check_global_ic=a_always_check_global_ic,
             )
@@ -337,7 +328,6 @@ class MoralHazardProblem:
             reservation_utility=reservation_utility,
             a_ic_lb=a_ic_lb,
             a_ic_ub=a_ic_ub,
-            n_a_grid_points=n_a_grid_points,
             n_a_iterations=n_a_iterations,
             theta_init=theta_init_arr,
             clip_ratio=clip_ratio,

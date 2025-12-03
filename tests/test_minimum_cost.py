@@ -55,7 +55,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=1,
         )
 
@@ -75,7 +74,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=1,
         )
 
@@ -98,7 +96,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=1,
         )
         
@@ -108,7 +105,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=1,
         )
 
@@ -128,7 +124,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=0,  # Relaxed problem for stability
         )
 
@@ -150,7 +145,6 @@ class TestMinimumCost:
                 reservation_utility=Ubar,
                 a_ic_lb=0.0,
                 a_ic_ub=100.0,
-                n_a_grid_points=10,
                 n_a_iterations=1,
             )
             results.append(result)
@@ -176,7 +170,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=0,  # Relaxed problem for stability
         )
         assert result_2d.shape == actions_2d.shape
@@ -189,7 +182,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=0,  # Relaxed problem for stability
         )
         assert result_3d.shape == actions_3d.shape
@@ -205,7 +197,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=0,  # Relaxed problem
         )
 
@@ -223,7 +214,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=20,  # More grid points
             n_a_iterations=2,    # More iterations
             clip_ratio=1e5,      # Different clip ratio
             a_always_check_global_ic=np.array([0.0, 25.0, 50.0]),
@@ -244,7 +234,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=1,
         )
         
@@ -254,7 +243,6 @@ class TestMinimumCost:
             reservation_utility=reservation_utility,
             a_ic_lb=0.0,
             a_ic_ub=100.0,
-            n_a_grid_points=10,
             n_a_iterations=1,
         )
         result_direct = results.expected_wage

@@ -323,7 +323,6 @@ def _minimize_cost_internal(
     clip_ratio: float = 1e6,
     a_ic_lb: float = 0,
     a_ic_ub: float = np.inf,
-    n_a_grid_points: int = 10,
     a_always_check_global_ic: np.ndarray = np.array([0.0]),
 ) -> CostMinimizationResults:
     """

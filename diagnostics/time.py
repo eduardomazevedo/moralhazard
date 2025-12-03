@@ -32,7 +32,6 @@ mhp = MoralHazardProblem(cfg)
 # Cost minimization problem options
 intended_action = first_best_effort
 reservation_utility = u(0)
-n_a_grid_points = 10
 n_a_iterations = 10
 a_always_check_global_ic = np.array([0.0])
 
@@ -45,7 +44,6 @@ for i in range(n_a_iterations):
         reservation_utility=reservation_utility,
         a_ic_lb=a_ic_lb,
         a_ic_ub=a_ic_ub,
-        n_a_grid_points=n_a_grid_points,
         n_a_iterations=n_a_iterations,
         a_always_check_global_ic=a_always_check_global_ic,
     )
@@ -66,7 +64,6 @@ for i in range(n_a_iterations):
         reservation_utility=reservation_utility,
         a_ic_lb=a_ic_lb,
         a_ic_ub=a_ic_ub,
-        n_a_grid_points=n_a_grid_points,
         n_a_iterations=0,
         a_always_check_global_ic=a_always_check_global_ic,
     )

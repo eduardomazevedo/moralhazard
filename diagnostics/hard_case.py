@@ -81,7 +81,6 @@ try:
         reservation_utility=reservation_utility,
         a_ic_lb=a_ic_lb,
         a_ic_ub=a_ic_ub,
-        n_a_grid_points=10,
         n_a_iterations=1,
     )
     print("SUCCESS: Problem solved!")

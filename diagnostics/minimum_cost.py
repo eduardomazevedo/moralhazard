@@ -95,7 +95,6 @@ for i, (w, Ubar) in enumerate(zip(reservation_wages, reservation_utilities)):
                 reservation_utility=Ubar,
                 a_ic_lb=a_ic_lb,
                 a_ic_ub=a_ic_ub,
-                n_a_grid_points=10,
                 n_a_iterations=1,
             )
             costs.append(cost)

@@ -217,7 +217,6 @@ def solve_and_plot_distribution(*, spec: dict, utility_cfg: dict, reservation_ut
         reservation_utility=reservation_utility,
         a_ic_lb=spec.get("a_ic_lb", 0.0),
         a_ic_ub=spec.get("a_ic_ub", np.inf),
-        n_a_grid_points=10,
         n_a_iterations=10,
     )
 

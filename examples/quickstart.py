@@ -65,7 +65,6 @@ results = mhp.solve_cost_minimization_problem(
     reservation_utility=reservation_utility,
     a_ic_lb=0.0,
     a_ic_ub=100.0,
-    n_a_grid_points=10,
     n_a_iterations=10
 )
 
