@@ -8,7 +8,6 @@ from scipy.special import softplus, expit
 
 from .types import DualMaximizerResults, CostMinimizationResults
 from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
-from .utils import _maximize_1d_robust
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
@@ -359,14 +358,17 @@ def _minimize_cost_internal(
     while iterations < n_a_iterations:
         iterations += 1
         def objective(a: float | np.ndarray) -> float | np.ndarray:
-            return _compute_expected_utility(results_dual.optimal_contract, a, problem=problem)
-        
-        a_best, utility_best = _maximize_1d_robust(
-            objective=objective,
-            lower_bound=a_ic_lb,
-            upper_bound=a_ic_ub,
-            n_grid_points=n_a_grid_points,
+            return -_compute_expected_utility(results_dual.optimal_contract, a, problem=problem)
+
+        results_minimize = minimize(
+            fun=objective,
+            x0=a_ic_lb,
+            bounds=((a_ic_lb, np.min([a_ic_ub, intended_action])),),
+            method='L-BFGS-B'
         )
+
+        utility_best = -results_minimize.fun
+        a_best = results_minimize.x.item()
 
         global_ic_violation = utility_best - results_dual.constraints['U0']
         best_action_distance = np.abs(a_best - intended_action)
