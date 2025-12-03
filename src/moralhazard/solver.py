@@ -258,9 +258,6 @@ def _maximize_lagrange_dual(
     cons = _constraints(v_star, cache=cache, problem=problem, Ubar=Ubar)
 
     results = DualMaximizerResults(
-        a0=a0,
-        Ubar=Ubar,
-        a_hat=a_hat,
         optimal_contract=v_star,
         expected_wage=cons["Ewage"],
         multipliers={"lam": lam_opt, "mu": mu_opt, "mu_hat": mu_hat_opt},
@@ -338,10 +335,11 @@ def _minimize_cost_internal(
     best_action_trace: list[float] = []
     
     # Solve relaxed problem
+    a_hat = np.array([], dtype=np.float64)
     results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(
         a0=intended_action,
         Ubar=reservation_utility,
-        a_hat=np.array([], dtype=np.float64),
+        a_hat=a_hat,
         problem=problem,
         theta_init=theta_init,
         clip_ratio=clip_ratio,
@@ -349,7 +347,7 @@ def _minimize_cost_internal(
     theta_relaxed_optimal = theta_optimal
     
     # Add initial relaxed solve to traces
-    a_hat_trace.append(results_dual.a_hat.copy())
+    a_hat_trace.append(a_hat.copy())
     multipliers_trace.append(results_dual.multipliers.copy())
 
     # Check for any global IC violations
@@ -389,16 +387,16 @@ def _minimize_cost_internal(
             )
 
             # Add this iteration to traces
-            a_hat_trace.append(results_dual.a_hat.copy())
+            a_hat_trace.append(a_hat.copy())
             multipliers_trace.append(results_dual.multipliers.copy())
         else:
             break
 
     # Build CostMinimizationResults with traces
     cost_results = CostMinimizationResults(
-        a0=results_dual.a0,
-        Ubar=results_dual.Ubar,
-        a_hat=results_dual.a_hat,
+        a0=intended_action,
+        Ubar=reservation_utility,
+        a_hat=a_hat,
         optimal_contract=results_dual.optimal_contract,
         expected_wage=results_dual.expected_wage,
         multipliers=results_dual.multipliers,
