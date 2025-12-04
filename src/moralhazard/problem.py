@@ -159,7 +159,7 @@ class MoralHazardProblem:
             SolveResults object.
         """
 
-        results = _minimize_cost_internal(
+        return _minimize_cost_internal(
             intended_action,
             reservation_utility,
             problem=self,
@@ -170,8 +170,7 @@ class MoralHazardProblem:
             a_ic_ub=a_ic_ub,
             a_always_check_global_ic=a_always_check_global_ic,
         )
-
-        return results
+    
 
     def minimum_cost(
         self,

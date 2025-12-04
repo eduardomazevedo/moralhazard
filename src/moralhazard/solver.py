@@ -333,6 +333,7 @@ def _minimize_cost_internal(
     global_ic_violation_trace: list[float] = []
     best_action_distance_trace: list[float] = []
     best_action_trace: list[float] = []
+    foa_flag = None if n_a_iterations == 0 else True
     
     # Solve relaxed problem
     a_hat = np.array([], dtype=np.float64)
@@ -353,7 +354,6 @@ def _minimize_cost_internal(
     # Check for any global IC violations
     iterations = 0
     while iterations < n_a_iterations:
-        iterations += 1
         def objective(a: float | np.ndarray) -> float | np.ndarray:
             return -_compute_expected_utility(results_dual.optimal_contract, a, problem=problem)
 
@@ -376,6 +376,8 @@ def _minimize_cost_internal(
         best_action_trace.append(a_best)
 
         if global_ic_violation > 1e-6 and best_action_distance > 1e-6:
+            foa_flag = False
+            iterations += 1
             a_hat = np.concatenate([a_always_check_global_ic, np.array([a_best])])
             results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(
                 a0=intended_action,
@@ -392,7 +394,7 @@ def _minimize_cost_internal(
         else:
             break
 
-    # Build CostMinimizationResults with traces
+    # Build CostMinimizationResults
     cost_results = CostMinimizationResults(
         optimal_contract=results_dual.optimal_contract,
         expected_wage=results_dual.expected_wage,
@@ -400,7 +402,8 @@ def _minimize_cost_internal(
         multipliers=results_dual.multipliers,
         constraints=results_dual.constraints,
         solver_state=results_dual.solver_state,
-        n_outer_iterations=len(multipliers_trace),
+        n_outer_iterations=iterations,
+        first_order_approach_holds=foa_flag,
         a_hat_trace=a_hat_trace,
         multipliers_trace=multipliers_trace,
         global_ic_violation_trace=global_ic_violation_trace,

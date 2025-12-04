@@ -87,6 +87,7 @@ class CostMinimizationResults:
     constraints: dict
     solver_state: dict
     n_outer_iterations: int
+    first_order_approach_holds: bool | None
     a_hat_trace: list[np.ndarray]
     multipliers_trace: list[dict]
     global_ic_violation_trace: list[float]
