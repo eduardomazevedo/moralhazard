@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Any, Callable, TYPE_CHECKING
+from typing import Dict, Any, Callable, TYPE_CHECKING, Tuple
 import numpy as np
 
 if TYPE_CHECKING:
@@ -158,7 +158,6 @@ def _constraints(
 def _compute_expected_utility(
     v: np.ndarray,
     a: float | np.ndarray,
-    *,
     problem: "MoralHazardProblem",
 ) -> float | np.ndarray:
     """
@@ -176,10 +175,6 @@ def _compute_expected_utility(
     w = problem.w
     f = problem.f
     C = problem.C
-
-    # Let NumPy broadcasting handle both scalar and array inputs
-    if isinstance(a, np.ndarray) and a.ndim != 1:
-        raise ValueError(f"a must be 1D array; got shape {a.shape}")
     
     # f(y_grid[:, None], a) works for both scalar and array a due to broadcasting
     f_a = f(y_grid[:, None], a)
@@ -189,3 +184,41 @@ def _compute_expected_utility(
     
     # Return result as-is (numpy scalar for scalar input, array for array input)
     return result
+
+def _compute_expected_utility_and_grad(
+    v: np.ndarray,
+    a: float | np.ndarray,
+    problem: "MoralHazardProblem",
+) -> Tuple[float | np.ndarray, float | np.ndarray]:
+    """
+    Compute U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the Simpson grid.
+    Also computes the gradient dU/da.
+
+    Inputs:
+      - v : must have shape equal to problem.y_grid.shape
+      - a : a scalar or numpy array
+      - problem: MoralHazardProblem instance
+
+    Returns:
+      - Tuple of scalar if a is scalar; 1D array otherwise
+    """
+    y_grid = problem.y_grid
+    w = problem.w
+    f = problem.f
+    C = problem.C
+    Cprime = problem.Cprime
+    score = problem.score
+    
+    # f(y_grid[:, None], a) works for both scalar and array a due to broadcasting
+    f_a = f(y_grid[:, None], a)
+    s_a = score(y_grid[:, None], a)
+    integrals = w @ (v[:, None] * f_a)  # shape (m,) for array a, scalar for scalar a
+    integrals_grad = w @ (v[:, None] * f_a * s_a)  # shape (m,) for array a, scalar for scalar a
+    costs = C(a)  # shape (m,) for array a, scalar for scalar a
+    costs_grad = Cprime(a)  # shape (m,) for array a, scalar for scalar a
+
+    result = integrals - costs
+    result_grad = integrals_grad - costs_grad
+    
+    # Return result as-is (numpy scalar for scalar input, array for array input)
+    return result, result_grad

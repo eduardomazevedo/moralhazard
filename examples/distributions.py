@@ -24,7 +24,7 @@ theta = 1.0 / first_best_effort / (first_best_effort + initial_wealth)
 
 # utility (same across runs unless you change it here)
 utility_cfg = make_utility_cfg("log", w0=initial_wealth)
-reservation_utility = utility_cfg["u"](0.0) - 5.0
+reservation_utility = utility_cfg["u"](50.0)
 
 # default cost; override per-spec if you like
 C  = lambda a: theta * a ** 2 / 2
@@ -125,7 +125,7 @@ specs_to_do.append({
 specs_to_do.append({
     "name": "Student_t",
     "dist_cfg": make_distribution_cfg("student_t", nu=5.0, sigma=sigma),
-    "a0": 80.0,  # location parameter
+    "a0": 100.0,  # location parameter
     "a_ic_lb": 0.0,
     "a_ic_ub": 120.0,
     "C": C, "Cprime": Cprime,

@@ -8,6 +8,7 @@ from scipy.special import softplus, expit
 
 from .types import DualMaximizerResults, CostMinimizationResults
 from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
+from .utils import _maximize_agent_utility
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
@@ -354,19 +355,14 @@ def _minimize_cost_internal(
     # Check for any global IC violations
     iterations = 0
     while iterations < n_a_iterations:
-        def objective(a: float | np.ndarray) -> float | np.ndarray:
-            return -_compute_expected_utility(results_dual.optimal_contract, a, problem=problem)
-
-        results_minimize = minimize(
-            fun=objective,
-            x0=a_ic_lb,
-            bounds=((a_ic_lb, np.min([a_ic_ub, intended_action])),),
-            method='L-BFGS-B'
+        a_best, utility_best = _maximize_agent_utility(
+            v=results_dual.optimal_contract,
+            a_left=a_ic_lb,
+            a_right=a_ic_ub,
+            problem=problem,
+            n_intervals=5,
         )
-
-        utility_best = -results_minimize.fun
-        a_best = results_minimize.x.item()
-
+        
         global_ic_violation = utility_best - results_dual.constraints['U0']
         best_action_distance = np.abs(a_best - intended_action)
         
@@ -376,15 +372,18 @@ def _minimize_cost_internal(
         best_action_trace.append(a_best)
 
         if global_ic_violation > 1e-6 and best_action_distance > 1e-6:
+            if iterations == 0:
+                a_hat = a_always_check_global_ic.copy()
             foa_flag = False
             iterations += 1
-            a_hat = np.concatenate([a_always_check_global_ic, np.array([a_best])])
+            if a_best not in a_hat:
+                a_hat = np.concatenate([a_hat, np.array([a_best])])
             results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(
                 a0=intended_action,
                 Ubar=reservation_utility,
                 a_hat=a_hat,
                 problem=problem,
-                theta_init=theta_relaxed_optimal,
+                theta_init=theta_optimal,
                 clip_ratio=clip_ratio,
             )
 
