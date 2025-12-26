@@ -103,8 +103,8 @@ for case_name, mhp, reservation_utility in cases:
         )
         t1 = time.perf_counter()
         times_relaxed.append(t1 - t0)
-    relaxed_cmp_time = np.mean(times_relaxed)
-    print(f"    Mean time: {relaxed_cmp_time:.4f}s")
+    relaxed_cmp_time = np.mean(times_relaxed) * 1000  # Convert to ms
+    print(f"    Mean time: {relaxed_cmp_time:.2f}ms")
     
     # 2. Cost minimization problem (with iterations)
     print("  Timing CMP...")
@@ -121,8 +121,8 @@ for case_name, mhp, reservation_utility in cases:
         )
         t1 = time.perf_counter()
         times_cmp.append(t1 - t0)
-    cmp_time = np.mean(times_cmp)
-    print(f"    Mean time: {cmp_time:.4f}s")
+    cmp_time = np.mean(times_cmp) * 1000  # Convert to ms
+    print(f"    Mean time: {cmp_time:.2f}ms")
     
     # 3. Principal problem
     print("  Timing principal problem...")
@@ -139,8 +139,8 @@ for case_name, mhp, reservation_utility in cases:
         )
         t1 = time.perf_counter()
         times_principal.append(t1 - t0)
-    principal_time = np.mean(times_principal)
-    print(f"    Mean time: {principal_time:.4f}s")
+    principal_time = np.mean(times_principal) * 1000  # Convert to ms
+    print(f"    Mean time: {principal_time:.2f}ms")
     
     results.append({
         "case": case_name,
