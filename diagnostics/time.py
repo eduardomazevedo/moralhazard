@@ -23,7 +23,7 @@ def Cprime(a): return theta * a
 
 # Cost minimization problem options
 intended_action = first_best_effort
-n_a_iterations = 10
+n_a_iterations = 100
 a_always_check_global_ic = np.array([])
 
 # Setup utility config (used for all cases)

@@ -45,6 +45,8 @@ a_min, a_max = 0.0, 200.0
 a_ic_lb, a_ic_ub = a_min, a_max
 action_grid_plot = np.linspace(a_min, a_max, 100)
 
+n_a_iterations = 100
+
 # -------------------------------------------------------------
 # Solve Cost Minimization Problem
 # -------------------------------------------------------------
@@ -55,7 +57,8 @@ sol = mhp.solve_cost_minimization_problem(
     intended_action=intended_action,
     reservation_utility=reservation_utility,
     a_ic_lb=a_ic_lb,
-    a_ic_ub=a_ic_ub
+    a_ic_ub=a_ic_ub,
+    n_a_iterations=n_a_iterations
 )
 
 # Print solution

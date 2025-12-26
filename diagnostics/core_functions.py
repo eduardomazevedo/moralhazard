@@ -91,7 +91,7 @@ for key in ["f0", "s0", "wf0", "wf0s0"]:
     print(f"    {key} = {val}")
     print()
 
-for key in ["D", "R", "WD_T"]:
+for key in ["D", "R", "weighted_D"]:
     val = cache[key]
     print(f"  {key}: shape={val.shape}, dtype={val.dtype}")
     if val.ndim == 2:
@@ -142,7 +142,7 @@ for key in ["f0", "s0", "wf0", "wf0s0"]:
     print(f"    {key} = {val}")
     print()
 
-for key in ["D", "R", "WD_T"]:
+for key in ["D", "R", "weighted_D"]:
     val = cache_empty[key]
     print(f"  {key}: shape={val.shape}, dtype={val.dtype}")
     if val.ndim == 2:

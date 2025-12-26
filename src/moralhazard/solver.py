@@ -75,7 +75,7 @@ def _dual_value_and_grad(
 
     Assumes types already validated upstream.
     """
-    m = cache["R"].shape[1]
+    m = cache["R"].shape[0]
 
     lam, mu, mu_hat = _decode_theta(theta)
 
@@ -126,7 +126,7 @@ def _maximize_lagrange_dual(
     )
 
     # Initialization
-    m = int(cache["R"].shape[1])
+    m = int(cache["R"].shape[0])
     expected_shape = (2 + m,)
     warn_flags: list[str] = []
 
@@ -371,7 +371,10 @@ def _minimize_cost_internal(
         best_action_distance_trace.append(best_action_distance)
         best_action_trace.append(a_best)
 
-        if global_ic_violation > 1e-6 and best_action_distance > 1e-6:
+        global_ic_tolerance = 1e-3
+        best_action_distance_tolerance = 1e-3
+
+        if global_ic_violation > global_ic_tolerance and best_action_distance > best_action_distance_tolerance:
             if iterations == 0:
                 a_hat = a_always_check_global_ic.copy()
             foa_flag = False

@@ -21,12 +21,12 @@ def _make_cache(
     convenient to reuse. It does **not** include primitives (functions) or
     problem parameters/inputs like y_grid, w, a0, Ubar, or a_hat.
 
-    Returns keys:
-      - f0, s0                 : (n,)
-      - D, R                   : (n, m) and (n, m)
-      - wf0, wf0s0             : (n,)
-      - WD_T                   : (m, n) = (w[:,None] * D).T
-      - C0, Cprime0, C_hat     : floats / (m,)
+    Returns keys: (m dimension of a_hat, n dimension of y_grid)
+      - f0, s0                 : (n,) density and score vectors at a0.
+      - D, R                   : (m, n) density matrix at fixed comparison actions a_hat and (m, n) ratio matrix (n as last dimension for efficiency).
+      - wf0, wf0s0             : (n,) weighted density and weighted density times score vectors.
+      - weighted_D              : (m, n) = (w[None, :] * D) weighted density matrix (n as last dimension for efficiency).
+      - C0, Cprime0, C_hat     : floats / (m,) cost function at a0, derivative of cost function at a0, and cost function at fixed comparison actions a_hat.
     """
     y_grid = problem.y_grid
     w = problem.w
@@ -39,8 +39,8 @@ def _make_cache(
     f0 = f(y_grid, a0)           # (n,)
     s0 = score(y_grid, a0)       # (n,)
 
-    # Density matrix at fixed comparison actions a_hat: (n, m)
-    D = f(y_grid[:, None], a_hat[None, :])  # (n, m)
+    # Density matrix at fixed comparison actions a_hat: (m, n) with n as last dimension for efficiency
+    D = f(y_grid[None, :], a_hat[:, None])  # (m, n)
 
     # Cached weights/products
     wf0 = w * f0
@@ -48,20 +48,21 @@ def _make_cache(
 
     # Ratio for the global IC constraints: R = 1 - D / f0 (broadcast along columns)
     # Add numerical safeguards to prevent extreme values that could cause optimization issues
+    # D is (m, n), f0 is (n,), so we broadcast f0 along rows
     f0_safe = np.maximum(f0, 1e-12)  # Ensure f0 is not too small
-    ratio = D / f0_safe[:, None]  # (n, m)
+    ratio = D / f0_safe[None, :]  # (m, n)
     
     # Clip the ratio to prevent extreme values that could destabilize the dual optimization
     ratio_clipped = np.clip(ratio, -clip_ratio, clip_ratio)
-    R = 1.0 - ratio_clipped  # (n, m)
+    R = 1.0 - ratio_clipped  # (m, n)
 
     # Precompute C-related terms
     C0 = C(a0)
     Cprime0 = Cprime(a0)
     C_hat = C(a_hat)  # (m,)
 
-    # Precompute weighted D for Uhat integrals: (w[:, None] * D).T @ v
-    WD_T = (w[:, None] * D).T  # (m, n)
+    # Precompute weighted D for Uhat integrals: weighted_D @ v where weighted_D is (m, n)
+    weighted_D = w[None, :] * D  # (m, n)
 
     return {
         "f0": f0,
@@ -70,7 +71,7 @@ def _make_cache(
         "R": R,
         "wf0": wf0,
         "wf0s0": wf0s0,
-        "WD_T": WD_T,
+        "weighted_D": weighted_D,
         "C0": C0,
         "Cprime0": Cprime0,
         "C_hat": C_hat,
@@ -86,7 +87,7 @@ def _canonical_contract(
     problem: "MoralHazardProblem",
 ) -> np.ndarray:
     """
-    Canonical contract map v = g(λ + μ s0 + R μ̂).
+    Canonical contract map v = g(λ + μ s0 + μ̂^T R).
 
     Parameters
     ----------
@@ -95,9 +96,9 @@ def _canonical_contract(
     mu: float
         FOC multiplier
     mu_hat: np.ndarray
-        IC multipliers
+        IC multipliers (m,)
     s0 : np.ndarray (n,)
-    R  : np.ndarray (n, m)
+    R  : np.ndarray (m, n)
     problem: MoralHazardProblem
         Problem instance containing primitives
 
@@ -106,7 +107,7 @@ def _canonical_contract(
     v : np.ndarray (n,)
     """
     g = problem.g
-    z = lam + mu * s0 + R @ mu_hat
+    z = lam + mu * s0 + (mu_hat @ R)
     v = g(z)
     return v
 
@@ -131,7 +132,7 @@ def _constraints(
     k = problem.k_func
     wf0 = cache["wf0"]
     wf0s0 = cache["wf0s0"]
-    WD_T = cache["WD_T"]
+    weighted_D = cache["weighted_D"]
     C0 = cache["C0"]
     Cprime0 = cache["Cprime0"]
     C_hat = cache["C_hat"]
@@ -143,7 +144,7 @@ def _constraints(
     FOC = wf0s0 @ v - Cprime0
 
     # Uhat (m,) and IC = Uhat - U0
-    Uhat = WD_T @ v - C_hat  # (m,)
+    Uhat = weighted_D @ v - C_hat  # (m,)
     IC = Uhat - U0
 
     # IR
