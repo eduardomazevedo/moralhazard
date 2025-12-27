@@ -14,7 +14,6 @@ authors = [{ name = "Eduardo Azevedo", email = "eduaze@gmail.com" }]
 # --- RUNTIME dependencies only ---
 dependencies = [
   "numpy>=1.24.0",
-  "pandas>=2.3.3",
   "scipy>=1.10.0",
 ]
 
@@ -36,8 +35,8 @@ exclude = ["/examples", "/docs", "/tests", "/.github"]
 dev = [
   "pytest>=8.0.0",
   "pytest-cov>=5.0.0",
-  "jupyter>=1.0.0",
   "matplotlib>=3.7.0",
+  "pandas>=2.3.3",  # Used in diagnostics/ and examples/, not in src/
   # optional niceties:
   # "ruff>=0.5.0",
   # "mypy>=1.8.0",
