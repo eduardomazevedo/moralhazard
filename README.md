@@ -1,1 +1,5 @@
-Moral hazard solver. The code is basically just organizing Ilan Wolff's code written for Azevedo and Wolff (2025) "Broad Validity of the First-Order Approach in Moral Hazard Models" available here https://github.com/eduardomazevedo/azevedo-wolff-replication/commit/e8af686713dc0fda13fff07cc41e3c7b918b0039. See `examples/quickstart.py` for usage.
+# moralhazard
+This module implements algorithm 1 in Azevedo and Wolff (2025) "Broad Validity of the First-Order Approach in Moral Hazard" for solving the moral hazard problem.
+
+See `examples/quickstart.py` for usage.
+Interactive demo at XXX
