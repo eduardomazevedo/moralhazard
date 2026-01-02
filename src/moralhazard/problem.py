@@ -8,6 +8,7 @@ from scipy.optimize import minimize_scalar
 from .types import CostMinimizationResults, PrincipalSolveResults
 from .grids import _make_grid
 from .solver import _minimize_cost_internal
+from .solver_cvxpy import _solve_cost_minimization_cvxpy, _minimum_cost_cvxpy
 from .core import _compute_expected_utility
 
 
@@ -236,6 +237,82 @@ class MoralHazardProblem:
         
         # Reshape to original shape
         return expected_wages_flat.reshape(original_shape)
+
+    def solve_cost_minimization_problem_cvxpy(
+        self,
+        intended_action: float,
+        reservation_utility: float,
+        a_hat: np.ndarray = None,
+        v_lb: float = None,
+        v_ub: float = None,
+        verbose: bool = False,
+    ) -> dict:
+        """
+        Solve the cost minimization problem using CVXPY convex optimization.
+        
+        This is an alternative to solve_cost_minimization_problem() that uses
+        direct convex optimization rather than the dual approach. Requires the
+        k function to accept an xp argument: k(v, xp=np).
+        
+        Args:
+            intended_action: The action a0 to implement.
+            reservation_utility: The agent's reservation utility Ubar.
+            a_hat: Array of actions for global IC constraints. If None/empty,
+                   only IR and FOC constraints are enforced.
+            v_lb: Lower bound on v(y). If None, inferred from u(0).
+            v_ub: Upper bound on v(y). Required for CARA/CRRA γ>1 (typically 0).
+            verbose: If True, print solver output.
+        
+        Returns:
+            dict with keys:
+            - 'status': solver status string
+            - 'optimal_contract': v(y) array if optimal
+            - 'expected_wage': E[k(v)] if optimal
+            - 'agent_utility': U(a0) if optimal
+            - 'objective_value': raw objective value
+        """
+        return _solve_cost_minimization_cvxpy(
+            intended_action=intended_action,
+            reservation_utility=reservation_utility,
+            problem=self,
+            a_hat=a_hat,
+            v_lb=v_lb,
+            v_ub=v_ub,
+            verbose=verbose,
+        )
+
+    def minimum_cost_cvxpy(
+        self,
+        intended_actions: np.ndarray,
+        reservation_utility: float,
+        a_hat: np.ndarray,
+        v_lb: float = None,
+        v_ub: float = None,
+    ) -> np.ndarray:
+        """
+        Compute minimum expected wage for multiple actions using CVXPY.
+        
+        Efficient batch computation using CVXPY Parameters. Requires 
+        intended_actions to be a subset of a_hat.
+        
+        Args:
+            intended_actions: 1D array of actions to implement. Must be subset of a_hat.
+            reservation_utility: The agent's reservation utility Ubar.
+            a_hat: 1D array of all actions for global IC constraints.
+            v_lb: Lower bound on v(y). If None, inferred from u(0).
+            v_ub: Upper bound on v(y). Required for CARA/CRRA γ>1 (typically 0).
+        
+        Returns:
+            1D array of minimum expected wages, same length as intended_actions.
+        """
+        return _minimum_cost_cvxpy(
+            intended_actions=intended_actions,
+            reservation_utility=reservation_utility,
+            a_hat=a_hat,
+            problem=self,
+            v_lb=v_lb,
+            v_ub=v_ub,
+        )
 
     def U(self, v: np.ndarray, a: float | np.ndarray) -> float | np.ndarray:
         """

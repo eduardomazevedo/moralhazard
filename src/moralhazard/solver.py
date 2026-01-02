@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from typing import Dict, Any, Tuple, TYPE_CHECKING
 import numpy as np
 from scipy.optimize import minimize
@@ -9,6 +10,7 @@ from scipy.special import softplus, expit
 from .types import DualMaximizerResults, CostMinimizationResults
 from .core import _make_cache, _canonical_contract, _constraints, _compute_expected_utility
 from .utils import _maximize_agent_utility
+from .solver_cvxpy import _find_binding_ic_actions_cvxpy
 
 if TYPE_CHECKING:
     from .problem import MoralHazardProblem
@@ -112,9 +114,13 @@ def _maximize_lagrange_dual(
     ftol: float = 1e-8,
     clip_ratio: float = 1e6,
     reparametrize: str | None = None,
+    raise_on_failure: bool = True,
 ) -> tuple[DualMaximizerResults, np.ndarray]:
     """
     Maximizes the Lagrange dual given a0, Ubar, and a_hat.
+    
+    If raise_on_failure=True (default), raises RuntimeError on solver failure.
+    If raise_on_failure=False, returns results with success=False for debugging.
     """
 
     # Build cache
@@ -225,6 +231,14 @@ def _maximize_lagrange_dual(
     res = minimize(**minimize_kwargs)
     t1 = time.time()
 
+    # Check for solver failure
+    solver_failed = not res.success
+    if solver_failed:
+        msg = f"Solver failed with reparametrize={reparametrize}, status={res.status}, message='{res.message}'"
+        warnings.warn(msg, RuntimeWarning)
+        if raise_on_failure:
+            raise RuntimeError(msg)
+
     # Convert φ → θ for output
     theta_opt = res.x.copy()
     if use_reparam:
@@ -291,7 +305,14 @@ def _maximize_lagrange_dual_with_fallback(
     """
     Maximizes the Lagrange dual given a0, Ubar, and a_hat.
     Simple wrapper to handle fallbacks if the solver fails.
+    
+    If all reparametrizations fail, issues a warning and returns the last
+    result (with success=False) for debugging instead of raising an error.
     """
+    last_result = None
+    last_theta = None
+    last_reparametrize = None
+    
     for reparametrize in reparametrize_pecking_order:
         try:
             return _maximize_lagrange_dual(
@@ -304,10 +325,32 @@ def _maximize_lagrange_dual_with_fallback(
                 ftol=ftol,
                 clip_ratio=clip_ratio,
                 reparametrize=reparametrize,
+                raise_on_failure=True,
             )
         except RuntimeError:
+            # Get results from failed solver for debugging (without raising)
+            last_result, last_theta = _maximize_lagrange_dual(
+                a0=a0,
+                Ubar=Ubar,
+                a_hat=a_hat,
+                problem=problem,
+                theta_init=theta_init,
+                maxiter=maxiter,
+                ftol=ftol,
+                clip_ratio=clip_ratio,
+                reparametrize=reparametrize,
+                raise_on_failure=False,
+            )
+            last_reparametrize = reparametrize
             continue
-    raise RuntimeError("Failed to solve Lagrange dual with any reparametrization.")
+    
+    # All solvers failed - warn and return last result for debugging
+    warnings.warn(
+        f"All reparametrizations failed for a0={a0}. "
+        f"Returning result from reparametrize={last_reparametrize} for debugging.",
+        RuntimeWarning
+    )
+    return last_result, last_theta
 
 
 
@@ -379,8 +422,62 @@ def _minimize_cost_internal(
                 a_hat = a_always_check_global_ic.copy()
             foa_flag = False
             iterations += 1
-            if a_best not in a_hat:
+            
+            # Check if we need CVXPY fallback:
+            # 1. Solver failed (success=False)
+            # 2. Best action is repeated (already in a_hat, so we wouldn't grow)
+            solver_failed = not results_dual.solver_state.get('success', True)
+            best_action_repeated = a_best in a_hat
+            
+            if solver_failed or best_action_repeated:
+                # CVXPY fallback: find binding constraints using CVXPY
+                reason = "solver failed" if solver_failed else "best action repeated"
+                warnings.warn(
+                    f"Triggering CVXPY fallback for a0={intended_action} ({reason}). "
+                    f"Running CVXPY with 100 a_hats to find binding IC constraints.",
+                    RuntimeWarning
+                )
+                
+                try:
+                    binding_actions, cvxpy_result = _find_binding_ic_actions_cvxpy(
+                        intended_action=intended_action,
+                        reservation_utility=reservation_utility,
+                        problem=problem,
+                        a_ic_lb=a_ic_lb,
+                        a_ic_ub=a_ic_ub if np.isfinite(a_ic_ub) else 100.0,
+                        n_a_hat=100,
+                        binding_tol=1e-4,
+                    )
+                    
+                    if len(binding_actions) > 0:
+                        warnings.warn(
+                            f"CVXPY found {len(binding_actions)} binding IC constraints: "
+                            f"{binding_actions[:5]}{'...' if len(binding_actions) > 5 else ''}",
+                            RuntimeWarning
+                        )
+                        # Add binding actions to a_hat
+                        for a_bind in binding_actions:
+                            if a_bind not in a_hat:
+                                a_hat = np.concatenate([a_hat, np.array([a_bind])])
+                    else:
+                        warnings.warn(
+                            f"CVXPY found no binding IC constraints. Adding a_best={a_best} anyway.",
+                            RuntimeWarning
+                        )
+                        if a_best not in a_hat:
+                            a_hat = np.concatenate([a_hat, np.array([a_best])])
+                            
+                except Exception as e:
+                    warnings.warn(
+                        f"CVXPY fallback failed: {e}. Adding a_best={a_best} instead.",
+                        RuntimeWarning
+                    )
+                    if a_best not in a_hat:
+                        a_hat = np.concatenate([a_hat, np.array([a_best])])
+            else:
+                # Normal case: just add the best action
                 a_hat = np.concatenate([a_hat, np.array([a_best])])
+            
             results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(
                 a0=intended_action,
                 Ubar=reservation_utility,

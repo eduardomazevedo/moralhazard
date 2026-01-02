@@ -31,4 +31,4 @@ diagnostics/output/
 
 # Tests
 /.pytest_cache/
-/.coverage
+/.coveragediagnostics/output/

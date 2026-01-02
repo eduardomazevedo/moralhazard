@@ -15,6 +15,7 @@ authors = [{ name = "Eduardo Azevedo", email = "eduaze@gmail.com" }]
 dependencies = [
   "numpy>=1.24.0",
   "scipy>=1.10.0",
+  "cvxpy>=1.4.0",
 ]
 
 [project.urls]
