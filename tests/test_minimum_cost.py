@@ -531,3 +531,49 @@ class TestCrossMethodConsistency:
             for f in failed_actions:
                 msg += f"  a={f['action']}: dual={f['dual']:.6f}, cvxpy={f['cvxpy']:.6f}, diff={f['diff']:.6f}\n"
             pytest.fail(msg)
+
+
+class TestPrincipalProblemCVXPY:
+    """Test principal problem CVXPY solver against dual solver."""
+
+    def test_principal_problem_cvxpy_vs_dual(self, cvxpy_compatible_problem):
+        """Principal problem: CVXPY and dual solvers should give similar results."""
+        problem = cvxpy_compatible_problem
+        u_fun = problem._primitives["u"]
+        reservation_utility = u_fun(0) - 5.0
+        
+        # Use full grid from 0 to 100 to enforce IC properly for both solvers
+        # This is important because the agent might want to deviate to low actions
+        a_grid = np.linspace(0.0, 100.0, 101)
+        
+        # CVXPY principal problem
+        result_cvxpy = problem.solve_principal_problem_cvxpy(
+            revenue_function=lambda a: a,
+            reservation_utility=reservation_utility,
+            discretized_a_grid=a_grid,
+        )
+        
+        # Dual principal problem (using same bounds as grid)
+        result_dual = problem.solve_principal_problem(
+            revenue_function=lambda a: a,
+            reservation_utility=reservation_utility,
+            a_min=0.0,
+            a_max=100.0,
+            a_ic_lb=0.0,
+            a_ic_ub=100.0,
+            n_a_iterations=10,
+        )
+        
+        # Compare optimal actions (should be close, within grid spacing)
+        action_diff = abs(result_cvxpy.optimal_action - result_dual.optimal_action)
+        assert action_diff < 5.0, (
+            f"Optimal action mismatch: cvxpy={result_cvxpy.optimal_action:.2f}, "
+            f"dual={result_dual.optimal_action:.2f}, diff={action_diff:.2f}"
+        )
+        
+        # Compare profits (should be close with same IC bounds)
+        profit_diff = abs(result_cvxpy.profit - result_dual.profit)
+        assert profit_diff < 0.5, (
+            f"Profit mismatch: cvxpy={result_cvxpy.profit:.4f}, "
+            f"dual={result_dual.profit:.4f}, diff={profit_diff:.4f}"
+        )

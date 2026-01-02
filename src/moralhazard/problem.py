@@ -401,3 +401,88 @@ class MoralHazardProblem:
             optimal_action=a_star,
             cmp_result=results_inner,
         )
+
+    def solve_principal_problem_cvxpy(
+        self,
+        revenue_function: "Callable[[float], float]",
+        reservation_utility: float,
+        discretized_a_grid: np.ndarray,
+        v_lb: float = None,
+        v_ub: float = None,
+    ) -> PrincipalSolveResults:
+        """
+        Principal's problem using CVXPY with full discretization.
+        
+        Simple approach:
+        1. Use discretized_a_grid as both intended actions AND a_hat for IC
+        2. Compute minimum cost for all actions using batch CVXPY solver
+        3. Find action with highest profit = revenue(a) - E[w(a)]
+        
+        Parameters
+        ----------
+        revenue_function : callable
+            R(a) -> revenue from action a
+        reservation_utility : float
+            Agent's reservation utility Ubar
+        discretized_a_grid : np.ndarray
+            Grid of actions (used for both intended actions and IC constraints)
+        v_lb, v_ub : float, optional
+            Bounds on contract v(y). If None, inferred from u.
+            
+        Returns
+        -------
+        PrincipalSolveResults
+            Optimal action, profit, and cost minimization result at optimum.
+        """
+        a_grid = np.asarray(discretized_a_grid)
+        
+        # 1. Compute minimum expected wage for all actions using CVXPY
+        # Use a_grid as both intended_actions and a_hat
+        expected_wages = self.minimum_cost_cvxpy(
+            intended_actions=a_grid,
+            reservation_utility=reservation_utility,
+            a_hat=a_grid,
+            v_lb=v_lb,
+            v_ub=v_ub,
+        )
+        
+        # 2. Compute revenue for each action
+        revenues = np.array([revenue_function(a) for a in a_grid])
+        
+        # 3. Find action with highest profit
+        profits = revenues - expected_wages
+        idx_star = np.argmax(profits)
+        a_star = float(a_grid[idx_star])
+        profit_star = float(profits[idx_star])
+        
+        # 4. Get full solution at optimal action
+        cvxpy_result = self.solve_cost_minimization_problem_cvxpy(
+            intended_action=a_star,
+            reservation_utility=reservation_utility,
+            a_hat=a_grid,
+            v_lb=v_lb,
+            v_ub=v_ub,
+        )
+        
+        # 5. Convert to CostMinimizationResults for consistency
+        cmp_result = CostMinimizationResults(
+            optimal_contract=cvxpy_result['optimal_contract'],
+            expected_wage=cvxpy_result['expected_wage'],
+            a_hat=a_grid,
+            multipliers={},  # CVXPY doesn't return dual multipliers in our interface
+            constraints={'U0': cvxpy_result['agent_utility']},
+            solver_state={'status': cvxpy_result['status'], 'method': 'cvxpy'},
+            n_outer_iterations=0,
+            first_order_approach_holds=None,
+            a_hat_trace=[],
+            multipliers_trace=[],
+            global_ic_violation_trace=[],
+            best_action_distance_trace=[],
+            best_action_trace=[],
+        )
+        
+        return PrincipalSolveResults(
+            profit=profit_star,
+            optimal_action=a_star,
+            cmp_result=cmp_result,
+        )

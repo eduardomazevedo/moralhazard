@@ -380,7 +380,8 @@ def _minimum_cost_cvxpy(
         # Solve
         prob.solve(verbose=False)
         
-        if prob.status == cp.OPTIMAL:
+        # Accept both optimal and optimal_inaccurate
+        if prob.status in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
             results[j] = prob.value
         else:
             results[j] = np.nan

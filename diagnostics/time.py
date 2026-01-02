@@ -1,32 +1,33 @@
 # Timing cost minimization problem solvers and principal problem
 import time
 import os
+import warnings
 import numpy as np
 import pandas as pd
 from moralhazard import MoralHazardProblem
 from moralhazard.config_maker import make_utility_cfg, make_distribution_cfg
 
+# Suppress warnings for cleaner output
+warnings.filterwarnings("ignore")
+
 # ---- primitives (same as prototype Normal model) ----
 initial_wealth = 50
-sigma_gaussian = 10.0
+sigma_gaussian = 40.0
 first_best_effort = 100
 theta = 1.0 / first_best_effort / (first_best_effort + initial_wealth)
 
 a_ic_lb = 0.0
 a_ic_ub = 130.0
 
-def u(c): return np.log(initial_wealth + c)
-def k(utils): return np.exp(utils) - initial_wealth
-def g(z): return np.log(np.maximum(z, initial_wealth))
 def C(a): return theta * a ** 2 / 2
 def Cprime(a): return theta * a
 
 # Cost minimization problem options
 intended_action = first_best_effort
-n_a_iterations = 100
+n_timing_iterations = 20  # Number of timing iterations (reduced for speed)
 a_always_check_global_ic = np.array([])
 
-# Setup utility config (used for all cases)
+# Setup utility config (used for all cases - includes CVXPY-compatible k)
 utility_cfg = make_utility_cfg("log", w0=initial_wealth)
 u_fun = utility_cfg["u"]
 
@@ -35,19 +36,15 @@ cases = []
 
 # Gaussian cases (easy and hard)
 sigma = sigma_gaussian
-def f_gaussian(y, a):
-    return (1 / (np.sqrt(2 * np.pi) * sigma)) * np.exp(-((y - a) ** 2) / (2 * sigma ** 2))
-def score_gaussian(y, a):
-    return (y - a) / (sigma ** 2)
-
+dist_cfg_gaussian = make_distribution_cfg("gaussian", sigma=sigma)
 cfg_gaussian = {
-    "problem_params": {"u": u, "k": k, "link_function": g, "C": C, "Cprime": Cprime, "f": f_gaussian, "score": score_gaussian},
+    "problem_params": {**utility_cfg, **dist_cfg_gaussian, "C": C, "Cprime": Cprime},
     "computational_params": {"distribution_type": "continuous", "y_min": a_ic_lb - 3 * sigma, "y_max": a_ic_ub + 3 * sigma, "n": 201},
 }
 mhp_gaussian = MoralHazardProblem(cfg_gaussian)
 
-cases.append(("gaussian-easy", mhp_gaussian, u(10)))
-cases.append(("gaussian-hard", mhp_gaussian, u(-10)))
+cases.append(("gaussian-easy", mhp_gaussian, u_fun(10)))
+cases.append(("gaussian-hard", mhp_gaussian, u_fun(-10)))
 
 # t-distribution case (sigma=20, nu=1.15, reservation_utility=u(0))
 sigma_t = 20.0
@@ -66,7 +63,7 @@ cfg_t = {
 }
 mhp_t = MoralHazardProblem(cfg_t)
 
-cases.append(("t", mhp_t, u(0)))
+cases.append(("t", mhp_t, u_fun(0)))
 
 # Storage for results
 results = []
@@ -88,10 +85,13 @@ for case_name, mhp, reservation_utility in cases:
         a_pp_min = 0.0
         a_pp_max = 100.0
     
-    # 1. Cost minimization relaxed problem (0 iterations)
-    print("  Timing relaxed CMP...")
+    # Create a_hat for CVXPY (100 linearly spaced actions)
+    a_hat_cvxpy = np.linspace(a_lb, a_ub, 101)
+    
+    # 1. Dual: Relaxed CMP (0 iterations)
+    print("  Timing dual relaxed CMP...")
     times_relaxed = []
-    for i in range(n_a_iterations):
+    for i in range(n_timing_iterations):
         t0 = time.perf_counter()
         _ = mhp.solve_cost_minimization_problem(
             intended_action=intended_action,
@@ -103,31 +103,31 @@ for case_name, mhp, reservation_utility in cases:
         )
         t1 = time.perf_counter()
         times_relaxed.append(t1 - t0)
-    relaxed_cmp_time = np.mean(times_relaxed) * 1000  # Convert to ms
+    relaxed_cmp_time = np.mean(times_relaxed) * 1000
     print(f"    Mean time: {relaxed_cmp_time:.2f}ms")
     
-    # 2. Cost minimization problem (with iterations)
-    print("  Timing CMP...")
+    # 2. Dual: Full CMP (with iterations)
+    print("  Timing dual CMP...")
     times_cmp = []
-    for i in range(n_a_iterations):
+    for i in range(n_timing_iterations):
         t0 = time.perf_counter()
         _ = mhp.solve_cost_minimization_problem(
             intended_action=intended_action,
             reservation_utility=reservation_utility,
             a_ic_lb=a_lb,
             a_ic_ub=a_ub,
-            n_a_iterations=n_a_iterations,
+            n_a_iterations=10,  # Fixed iterations for fair comparison
             a_always_check_global_ic=a_always_check_global_ic,
         )
         t1 = time.perf_counter()
         times_cmp.append(t1 - t0)
-    cmp_time = np.mean(times_cmp) * 1000  # Convert to ms
+    cmp_time = np.mean(times_cmp) * 1000
     print(f"    Mean time: {cmp_time:.2f}ms")
     
-    # 3. Principal problem
-    print("  Timing principal problem...")
+    # 3. Dual: Principal problem
+    print("  Timing dual principal problem...")
     times_principal = []
-    for i in range(n_a_iterations):
+    for i in range(n_timing_iterations):
         t0 = time.perf_counter()
         _ = mhp.solve_principal_problem(
             revenue_function=lambda a: a,
@@ -139,14 +139,63 @@ for case_name, mhp, reservation_utility in cases:
         )
         t1 = time.perf_counter()
         times_principal.append(t1 - t0)
-    principal_time = np.mean(times_principal) * 1000  # Convert to ms
+    principal_time = np.mean(times_principal) * 1000
     print(f"    Mean time: {principal_time:.2f}ms")
+    
+    # 4. CVXPY: Relaxed CMP (a_hat = [])
+    print("  Timing CVXPY relaxed CMP...")
+    times_cvxpy_relaxed = []
+    for i in range(n_timing_iterations):
+        t0 = time.perf_counter()
+        _ = mhp.solve_cost_minimization_problem_cvxpy(
+            intended_action=intended_action,
+            reservation_utility=reservation_utility,
+            a_hat=np.array([]),  # Relaxed: no global IC constraints
+        )
+        t1 = time.perf_counter()
+        times_cvxpy_relaxed.append(t1 - t0)
+    cvxpy_relaxed_time = np.mean(times_cvxpy_relaxed) * 1000
+    print(f"    Mean time: {cvxpy_relaxed_time:.2f}ms")
+    
+    # 5. CVXPY: Full CMP (with 100 a_hat actions)
+    print("  Timing CVXPY CMP (100 a_hat)...")
+    times_cvxpy_cmp = []
+    for i in range(n_timing_iterations):
+        t0 = time.perf_counter()
+        _ = mhp.solve_cost_minimization_problem_cvxpy(
+            intended_action=intended_action,
+            reservation_utility=reservation_utility,
+            a_hat=a_hat_cvxpy,
+        )
+        t1 = time.perf_counter()
+        times_cvxpy_cmp.append(t1 - t0)
+    cvxpy_cmp_time = np.mean(times_cvxpy_cmp) * 1000
+    print(f"    Mean time: {cvxpy_cmp_time:.2f}ms")
+    
+    # 6. CVXPY: Principal problem (100-action grid)
+    print("  Timing CVXPY principal problem (100 actions)...")
+    a_grid_principal = np.linspace(a_pp_min, a_pp_max, 100)
+    times_cvxpy_principal = []
+    for i in range(n_timing_iterations):
+        t0 = time.perf_counter()
+        _ = mhp.solve_principal_problem_cvxpy(
+            revenue_function=lambda a: a,
+            reservation_utility=reservation_utility,
+            discretized_a_grid=a_grid_principal,
+        )
+        t1 = time.perf_counter()
+        times_cvxpy_principal.append(t1 - t0)
+    cvxpy_principal_time = np.mean(times_cvxpy_principal) * 1000
+    print(f"    Mean time: {cvxpy_principal_time:.2f}ms")
     
     results.append({
         "case": case_name,
-        "relaxed_cmp": relaxed_cmp_time,
-        "cmp": cmp_time,
-        "principals_problem": principal_time,
+        "dual_relaxed": relaxed_cmp_time,
+        "dual_cmp": cmp_time,
+        "dual_principal": principal_time,
+        "cvxpy_relaxed": cvxpy_relaxed_time,
+        "cvxpy_cmp": cvxpy_cmp_time,
+        "cvxpy_principal": cvxpy_principal_time,
     })
     print()
 
@@ -154,8 +203,8 @@ for case_name, mhp, reservation_utility in cases:
 df = pd.DataFrame(results)
 
 # Print table
-print("=== Results Table ===")
-print(df.to_string(index=False))
+print("=== Results Table (all times in ms) ===")
+print(df.to_string(index=False, float_format="%.2f"))
 print()
 
 # Save CSV

@@ -406,6 +406,15 @@ def _minimize_cost_internal(
             n_intervals=5,
         )
         
+        # Handle case where _maximize_agent_utility failed to find any valid action
+        if a_best is None:
+            warnings.warn(
+                f"_maximize_agent_utility returned None for a0={intended_action}. "
+                f"Breaking out of iteration loop.",
+                RuntimeWarning
+            )
+            break
+        
         global_ic_violation = utility_best - results_dual.constraints['U0']
         best_action_distance = np.abs(a_best - intended_action)
         

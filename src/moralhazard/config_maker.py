@@ -58,9 +58,10 @@ def make_utility_cfg(
             return np.log(x + w0)
 
         # k(u) = exp(u) - w0
-        def k(uval: ArrayLike) -> ArrayLike:
-            uval = _asarray(uval)
-            return np.exp(uval) - w0
+        def k(uval: ArrayLike, xp=np) -> ArrayLike:
+            if xp is np:
+                uval = _asarray(uval)
+            return xp.exp(uval) - w0
 
         # link_function(z) = log(max(w0, z))
         def link_function(z: ArrayLike) -> ArrayLike:
@@ -83,10 +84,14 @@ def make_utility_cfg(
             return np.power(np.maximum(x + w0, 0.0), one_minus_g) / one_minus_g
 
         # k(u) = (( (1-γ) u )^{1/(1-γ)}) - w0
-        def k(uval: ArrayLike) -> ArrayLike:
-            uval = _asarray(uval)
-            base = np.maximum((one_minus_g * uval), 0.0)
-            return np.power(base, inv_power) - w0
+        def k(uval: ArrayLike, xp=np) -> ArrayLike:
+            if xp is np:
+                uval = _asarray(uval)
+                base = np.maximum((one_minus_g * uval), 0.0)
+            else:
+                # CVXPY: use cp.maximum
+                base = xp.maximum((one_minus_g * uval), 0.0)
+            return xp.power(base, inv_power) - w0
 
         # link_function(z) = max(w0^γ, z)^{(1-γ)/γ}/(1-γ)
         def link_function(z: ArrayLike) -> ArrayLike:
@@ -106,11 +111,15 @@ def make_utility_cfg(
             return -np.exp(-alpha * (x + w0)) / alpha
 
         # k(u) = - (1/α) log(-α u) - w0
-        def k(uval: ArrayLike) -> ArrayLike:
-            uval = _asarray(uval)
-            # -α u must be > 0; clamp tiny to avoid NaNs
-            t = np.maximum(-alpha * uval, 1e-300)
-            return -(1.0 / alpha) * np.log(t) - w0
+        def k(uval: ArrayLike, xp=np) -> ArrayLike:
+            if xp is np:
+                uval = _asarray(uval)
+                # -α u must be > 0; clamp tiny to avoid NaNs
+                t = np.maximum(-alpha * uval, 1e-300)
+            else:
+                # CVXPY: use cp.maximum
+                t = xp.maximum(-alpha * uval, 1e-300)
+            return -(1.0 / alpha) * xp.log(t) - w0
 
         # link_function(z) = - 1 / (α * max(exp(α w0), z))
         def link_function(z: ArrayLike) -> ArrayLike:
