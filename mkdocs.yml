@@ -1,0 +1,33 @@
+site_name: moralhazard
+site_url: https://eduardomazevedo.github.io/moralhazard
+repo_url: https://github.com/eduardomazevedo/moralhazard
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: indigo
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            heading_level: 2
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - API Reference:
+    - MoralHazardProblem: reference/problem.md
+    - Configuration: reference/config_maker.md
+    - Result Types: reference/types.md

@@ -32,3 +32,6 @@ diagnostics/output/
 # Tests
 /.pytest_cache/
 /.coveragediagnostics/output/
+
+# MkDocs
+site/
