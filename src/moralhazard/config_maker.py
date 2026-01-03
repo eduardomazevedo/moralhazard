@@ -1,4 +1,8 @@
-# config_maker.py
+"""Factory functions for utility and distribution primitives.
+
+Provides make_utility_cfg() and make_distribution_cfg() to generate the
+callable primitives (u, k, link_function, f, score) needed to initialize a MoralHazardProblem.
+"""
 from __future__ import annotations
 import math
 from typing import Callable, Dict, Optional
@@ -6,27 +10,59 @@ import numpy as np
 
 ArrayLike = np.ndarray | float
 
-# ---------- helpers ----------
 def _asarray(x: ArrayLike) -> np.ndarray:
+    """Convert input to float64 numpy array.
+
+    Args:
+        x: Scalar or array-like input.
+
+    Returns:
+        Numpy array with dtype float64.
+    """
     return np.asarray(x, dtype=float)
 
+
 def _safe_log(x: ArrayLike) -> ArrayLike:
-    # Domain-protected log: returns -inf for x<=0 (NumPy behavior),
-    # which is appropriate since callers typically exponentiate later.
+    """Compute natural logarithm with domain protection.
+
+    Returns -inf for x <= 0 (standard NumPy behavior), which is appropriate
+    since callers typically exponentiate the result later.
+
+    Args:
+        x: Scalar or array-like input.
+
+    Returns:
+        Natural logarithm of x.
+    """
     x = _asarray(x)
     return np.log(x)
 
+
 def _lgamma(x: ArrayLike) -> ArrayLike:
-    # Vectorized math.lgamma
+    """Compute vectorized log-gamma function.
+
+    Args:
+        x: Scalar or array-like input.
+
+    Returns:
+        Log of absolute value of gamma function at x.
+    """
     vlgamma = np.vectorize(math.lgamma, otypes=[float])
     return vlgamma(_asarray(x))
 
+
 def _is_integer_array(x: np.ndarray) -> np.ndarray:
-    # True where entries are finite integers
+    """Check which array elements are finite integers.
+
+    Args:
+        x: Numpy array to check.
+
+    Returns:
+        Boolean array, True where x is finite and equals floor(x).
+    """
     return np.isfinite(x) & (x == np.floor(x))
 
 
-# ---------- utility factories (u, k, link_function) ----------
 def make_utility_cfg(
     utility: str,
     *,
@@ -34,20 +70,32 @@ def make_utility_cfg(
     gamma: Optional[float] = None,
     alpha: Optional[float] = None
 ) -> Dict[str, Callable]:
-    """
-    Create broadcastable callables (u, k, link_function) consistent with the tables.
+    """Create utility function primitives for moral hazard problems.
+
+    Generates broadcastable callables (u, k, link_function) for common
+    utility specifications used in contract theory.
 
     Args:
-        utility: one of {"log", "crra", "cara"} (case-insensitive).
-        w0: baseline wealth (float).
-        gamma: CRRA coefficient (required if utility == "crra" and gamma != 1).
-        alpha: CARA coefficient (required if utility == "cara").
+        utility: Utility type, one of {"log", "crra", "cara"} (case-insensitive).
+        w0: Baseline wealth. Agent consumes x + w0 when receiving transfer x.
+        gamma: CRRA coefficient. Required if utility == "crra" and gamma != 1.
+            When gamma = 1, equivalent to log utility.
+        alpha: CARA coefficient. Required if utility == "cara". Must be > 0.
 
     Returns:
-        dict with:
-          - u(x): utility from transfer x (agent consumes x + w0)
-          - k(u): inverse utility -> transfer (wage) that delivers utility u
-          - link_function(z): link from z = λ + μ S(y|a0) into utility units
+        Dictionary with callables:
+            - u(x): Utility from transfer x (agent consumes x + w0).
+            - k(u): Inverse utility mapping utils -> transfer (wage).
+            - link_function(z): Link function mapping z = λ + μ S(y|a0)
+              to utility units for the dual formulation.
+
+    Raises:
+        ValueError: If utility type is unknown or required parameters missing.
+
+    Example:
+        >>> cfg = make_utility_cfg("log", w0=1.0)
+        >>> cfg["u"](0.0)  # u(0) = log(1) = 0
+        0.0
     """
     kind = utility.strip().lower()
 
@@ -132,33 +180,40 @@ def make_utility_cfg(
     raise ValueError("utility must be one of {'log', 'crra', 'cara'}.")
 
 
-# ---------- distribution factories (f, score) ----------
 def make_distribution_cfg(
     dist: str,
     **params
 ) -> Dict[str, Callable]:
-    """
-    Create broadcastable callables (f, score) for the distributions in your table.
+    """Create distribution primitives for moral hazard problems.
+
+    Generates broadcastable callables (f, score) for common outcome
+    distributions.
 
     Args:
-        dist: one of {
-          'gaussian', 'poisson', 'exponential',
-          'bernoulli', 'geometric', 'binomial', 'gamma', 'student_t'
-        }
-        params:
-          gaussian: sigma
-          poisson: (no extra params)
-          exponential: (no extra params)  # mean = a > 0
-          bernoulli: (no extra params)    # a in (0,1)
-          geometric: (no extra params)    # mean = a > 1; support y in {1,2,...}
-          binomial: n (trials, integer >= 1)
-          gamma: n (shape > 0), a is the scale (>0), mean = n*a
-          student_t: nu (df > 0), sigma (>0)
+        dist: Distribution type, one of {'gaussian', 'poisson', 'exponential',
+            'bernoulli', 'geometric', 'binomial', 'gamma', 'student_t'}.
+        **params: Distribution-specific parameters:
+            - gaussian: sigma (standard deviation, default 1.0).
+            - poisson: (no extra params, mean = a > 0).
+            - exponential: (no extra params, mean = a > 0).
+            - bernoulli: (no extra params, a ∈ (0,1) is success prob).
+            - geometric: (no extra params, mean = a > 1, support {1,2,...}).
+            - binomial: n (number of trials, integer >= 1).
+            - gamma: n (shape > 0, a is scale, mean = n*a).
+            - student_t: nu (degrees of freedom > 0), sigma (scale > 0).
 
     Returns:
-        dict with:
-          - f(y, a): PDF/PMF as function of outcome y and action/parameter a
-          - score(y, a): ∂/∂a log f(y|a)
+        Dictionary with callables:
+            - f(y, a): PDF/PMF as function of outcome y and action a.
+            - score(y, a): Score function ∂/∂a log f(y|a).
+
+    Raises:
+        ValueError: If distribution type is unknown or parameters invalid.
+
+    Example:
+        >>> cfg = make_distribution_cfg("gaussian", sigma=2.0)
+        >>> cfg["f"](0.0, 0.0)  # f(0|0) for N(0, 2²)
+        0.19947114...
     """
     kind = dist.strip().lower()
 

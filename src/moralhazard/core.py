@@ -1,3 +1,8 @@
+"""Core computational functions for the algorithm 1 dual formulation.
+
+Provides cache construction, canonical contract mapping, constraint evaluation,
+and expected utility computation used by the solver.
+"""
 from __future__ import annotations
 
 from typing import Dict, Any, Callable, TYPE_CHECKING, Tuple
@@ -14,19 +19,31 @@ def _make_cache(
     problem: "MoralHazardProblem",
     clip_ratio: float = 1e6,
 ) -> Dict[str, Any]:
-    """
-    Build the *per-solve* precomputations needed by the inner/outer problems.
+    """Build per-solve precomputations needed by the solver.
 
-    This cache now contains **only** derived arrays/scalars that are expensive or
-    convenient to reuse. It does **not** include primitives (functions) or
+    This cache contains only derived arrays/scalars that are
+    convenient to reuse. It does not include primitives (functions) or
     problem parameters/inputs like y_grid, w, a0, Ubar, or a_hat.
 
-    Returns keys: (m dimension of a_hat, n dimension of y_grid)
-      - f0, s0                 : (n,) density and score vectors at a0.
-      - D, R                   : (m, n) density matrix at fixed comparison actions a_hat and (m, n) ratio matrix (n as last dimension for efficiency).
-      - wf0, wf0s0             : (n,) weighted density and weighted density times score vectors.
-      - weighted_D              : (m, n) = (w[None, :] * D) weighted density matrix (n as last dimension for efficiency).
-      - C0, Cprime0, C_hat     : floats / (m,) cost function at a0, derivative of cost function at a0, and cost function at fixed comparison actions a_hat.
+    Args:
+        a0: The intended action.
+        a_hat: Array of comparison actions for global IC constraints, shape (m,).
+        problem: The MoralHazardProblem instance containing primitives.
+        clip_ratio: Maximum absolute value for ratio clipping to prevent
+            numerical instability. Defaults to 1e6.
+
+    Returns:
+        Dictionary with precomputed arrays (m = len(a_hat), n = len(y_grid)):
+            - f0: Density at a0, shape (n,).
+            - s0: Score at a0, shape (n,).
+            - D: Density matrix at a_hat, shape (m, n).
+            - R: Ratio matrix 1 - D/f0, shape (m, n).
+            - wf0: Weighted density w * f0, shape (n,).
+            - wf0s0: Weighted density times score w * f0 * s0, shape (n,).
+            - weighted_D: Weighted density matrix w * D, shape (m, n).
+            - C0: Cost at a0, float.
+            - Cprime0: Cost derivative at a0, float.
+            - C_hat: Costs at a_hat, shape (m,).
     """
     y_grid = problem.y_grid
     w = problem.w
@@ -86,25 +103,21 @@ def _canonical_contract(
     R: np.ndarray,
     problem: "MoralHazardProblem",
 ) -> np.ndarray:
-    """
-    Canonical contract map v = g(λ + μ s0 + μ̂^T R).
+    """Compute the canonical contract from dual multipliers.
 
-    Parameters
-    ----------
-    lam: float
-        IR multiplier
-    mu: float
-        FOC multiplier
-    mu_hat: np.ndarray
-        IC multipliers (m,)
-    s0 : np.ndarray (n,)
-    R  : np.ndarray (m, n)
-    problem: MoralHazardProblem
-        Problem instance containing primitives
+    Implements the contract map v = g(λ + μ s0 + μ̂ᵀ R) where g is the
+    link function from the problem primitives.
 
-    Returns
-    -------
-    v : np.ndarray (n,)
+    Args:
+        lam: IR (individual rationality) constraint multiplier.
+        mu: FOC (first-order condition) constraint multiplier.
+        mu_hat: IC (incentive compatibility) constraint multipliers, shape (m,).
+        s0: Score function evaluated at a0 on the grid, shape (n,).
+        R: Ratio matrix from the cache, shape (m, n).
+        problem: The MoralHazardProblem instance containing primitives.
+
+    Returns:
+        The optimal contract v evaluated on the grid, shape (n,).
     """
     g = problem.g
     z = lam + mu * s0 + (mu_hat @ R)
@@ -119,15 +132,25 @@ def _constraints(
     problem: "MoralHazardProblem",
     Ubar: float,
 ) -> Dict[str, Any]:
-    """
-    Evaluate all constraints and E[wage] given a contract v on the internal grid.
+    """Evaluate all constraints and expected wage for a given contract.
 
-    Uses only precomputed arrays from `cache` plus primitive inputs from problem and `Ubar`.
+    Uses precomputed arrays from the cache plus primitive inputs from
+    the problem and reservation utility.
+
+    Args:
+        v: Contract values on the internal grid, shape (n,).
+        cache: Precomputed cache from _make_cache.
+        problem: The MoralHazardProblem instance containing primitives.
+        Ubar: Agent's reservation utility.
 
     Returns:
-      - U0, IR, FOC : floats
-      - Uhat, IC    : np.ndarray (m,)
-      - Ewage       : float
+        Dictionary with constraint values:
+            - U0: Agent's expected utility at a0, float.
+            - IR: IR constraint violation (Ubar - U0), float.
+            - FOC: FOC constraint violation, float.
+            - Uhat: Agent's expected utility at each a_hat, shape (m,).
+            - IC: IC constraint violations (Uhat - U0), shape (m,).
+            - Ewage: Expected wage E[k(v)], float.
     """
     k = problem.k_func
     wf0 = cache["wf0"]
@@ -161,16 +184,20 @@ def _compute_expected_utility(
     a: float | np.ndarray,
     problem: "MoralHazardProblem",
 ) -> float | np.ndarray:
-    """
-    Compute U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the Simpson grid.
+    """Compute agent's expected utility for given contract and action(s).
 
-    Inputs:
-      - v : must have shape equal to problem.y_grid.shape
-      - a : scalar or 1D array
-      - problem: MoralHazardProblem instance
+    Evaluates U(a) = ∫ v(y) f(y|a) dy - C(a) using numerical integration
+    on the problem's internal grid.
+
+    Args:
+        v: Contract values on the grid, must have shape (n,) matching
+            problem.y_grid.shape.
+        a: Action(s) to evaluate. Can be a scalar or 1D array.
+        problem: The MoralHazardProblem instance containing primitives.
 
     Returns:
-      - scalar if a is scalar; 1D array otherwise
+        Expected utility. Returns a scalar if a is scalar, otherwise
+        returns an array with the same shape as a.
     """
     y_grid = problem.y_grid
     w = problem.w
@@ -191,17 +218,22 @@ def _compute_expected_utility_and_grad(
     a: float | np.ndarray,
     problem: "MoralHazardProblem",
 ) -> Tuple[float | np.ndarray, float | np.ndarray]:
-    """
-    Compute U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the Simpson grid.
-    Also computes the gradient dU/da.
+    """Compute agent's expected utility and its gradient with respect to action.
 
-    Inputs:
-      - v : must have shape equal to problem.y_grid.shape
-      - a : a scalar or numpy array
-      - problem: MoralHazardProblem instance
+    Evaluates U(a) = ∫ v(y) f(y|a) dy - C(a) and its derivative dU/da
+    using numerical integration on the problem's internal grid.
+
+    Args:
+        v: Contract values on the grid, must have shape (n,) matching
+            problem.y_grid.shape.
+        a: Action(s) to evaluate. Can be a scalar or numpy array.
+        problem: The MoralHazardProblem instance containing primitives.
 
     Returns:
-      - Tuple of scalar if a is scalar; 1D array otherwise
+        A tuple (utility, gradient) where:
+            - utility: Expected utility value(s).
+            - gradient: Derivative dU/da.
+        Both are scalars if a is scalar, otherwise arrays matching a's shape.
     """
     y_grid = problem.y_grid
     w = problem.w

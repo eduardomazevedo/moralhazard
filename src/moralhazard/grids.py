@@ -1,31 +1,36 @@
+"""Outcome grid and integration weight construction.
+
+Provides grid generation for continuous (Simpson's rule) and discrete distributions.
+"""
 from __future__ import annotations
 
 import numpy as np
 
 
 def _make_grid(distribution_type: str, computational_params: dict) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Build an outcome grid and weights.
+    """Build an outcome grid and integration weights.
 
-    Grid policy:
-      - For continuous: y_grid = linspace(y_min, y_max, n)
-      - For discrete: y_grid = arange(y_min, y_max + step_size, step_size)
-      - For continuous: n must be odd and >= 3 (for Simpson's rule)
-      - For discrete: no odd number requirement
-      - weights = Simpson weights scaled by step/3 for continuous, or ones for discrete
+    Creates a grid of outcome values and corresponding weights for numerical
+    integration. For continuous distributions, uses Simpson's rule weights.
+    For discrete distributions, uses uniform weights.
 
-    Parameters
-    ----------
-    distribution_type : str
-        Either 'continuous' or 'discrete'
-    computational_params : dict
-        For continuous: must contain 'y_min', 'y_max', 'n'
-        For discrete: must contain 'y_min', 'y_max', 'step_size'
+    Args:
+        distribution_type: Either 'continuous' or 'discrete'.
+        computational_params: Configuration dictionary containing:
+            - y_min: Minimum outcome value (required).
+            - y_max: Maximum outcome value (required).
+            - For continuous: n (int, grid points, must be odd >= 3).
+            - For discrete: step_size (float, must divide range evenly).
 
-    Returns
-    -------
-    y_grid : np.ndarray (n,), dtype float64
-    w      : np.ndarray (n,), dtype float64
+    Returns:
+        A tuple (y_grid, w) where:
+            - y_grid: Outcome grid of shape (n,), dtype float64.
+            - w: Integration weights of shape (n,), dtype float64.
+
+    Raises:
+        ValueError: If distribution_type is invalid or parameters are
+            inconsistent.
+        KeyError: If required parameters are missing.
     """
     if distribution_type not in ['continuous', 'discrete']:
         raise ValueError(f"distribution_type must be 'continuous' or 'discrete'; got '{distribution_type}'")

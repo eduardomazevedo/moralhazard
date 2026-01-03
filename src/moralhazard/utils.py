@@ -1,3 +1,7 @@
+"""Utility functions for agent optimization.
+
+Provides multi-start optimization for finding the agent's utility-maximizing action.
+"""
 from __future__ import annotations
 
 from typing import Callable, Optional, Dict, Any, TYPE_CHECKING
@@ -22,31 +26,25 @@ def _maximize_agent_utility(
     problem: Any,
     n_intervals: Optional[int] = 1,
 ) -> Tuple[Optional[float], float]:
-    """
-    Maximize the agent's expected utility over actions by splitting the
-    action domain into subintervals and applying bounded scalar optimization
-    on each.
+    """Find the action that maximizes agent's expected utility.
 
-    Parameters
-    ----------
-    v : np.ndarray
-        Contract values at different output levels.
-    a_left : float
-        Lower bound for feasible actions.
-    a_right : float
-        Upper bound for feasible actions.
-    problem : Any
-        Object with parameters needed for expected utility computation.
-    n_intervals : int, optional
-        Number of subintervals to search over. Default is 1.
+    Uses multi-start bounded optimization by splitting the action domain
+    into subintervals and running L-BFGS-B on each.
 
-    Returns
-    -------
-    (best_action, best_utility) : (Optional[float], float)
-        best_action : float or None
-            Optimal action if at least one subproblem succeeded, else None.
-        best_utility : float
-            Max expected utility found. May be -inf if all failed.
+    Args:
+        v: Contract values on the outcome grid, shape (n,).
+        a_left: Lower bound for feasible actions.
+        a_right: Upper bound for feasible actions.
+        problem: MoralHazardProblem instance with primitives for
+            expected utility computation.
+        n_intervals: Number of subintervals for multi-start search.
+            Defaults to 1.
+
+    Returns:
+        A tuple (best_action, best_utility) where:
+            - best_action: Utility-maximizing action if found, else None.
+            - best_utility: Maximum expected utility. May be -inf if all
+              subinterval optimizations failed.
     """
     # Objective (minimize negative utility)
     def neg_expected_utility(a: float) -> float:

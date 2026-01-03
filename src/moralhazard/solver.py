@@ -1,3 +1,8 @@
+"""Dual-based iterative solver implementing Algorithm 1 from Azevedo and Woff (2025).
+
+Solves the cost minimization problem by maximizing the Lagrange dual and
+iteratively adding binding global IC constraints.
+"""
 from __future__ import annotations
 
 import time
@@ -17,8 +22,16 @@ if TYPE_CHECKING:
 
 
 def _decode_theta(theta: np.ndarray) -> tuple[float, float, np.ndarray]:
-    """
-    Decode the theta array into lam, mu, and mu_hat.
+    """Decode the theta array into individual dual multipliers.
+
+    Args:
+        theta: Combined multiplier array of shape (2 + m,).
+
+    Returns:
+        A tuple (lam, mu, mu_hat) where:
+            - lam: IR constraint multiplier (float).
+            - mu: FOC constraint multiplier (float).
+            - mu_hat: IC constraint multipliers, shape (m,).
     """
     lam = theta[0]
     mu = theta[1]
@@ -26,27 +39,31 @@ def _decode_theta(theta: np.ndarray) -> tuple[float, float, np.ndarray]:
     return lam, mu, mu_hat
 
 def _encode_theta(lam: float, mu: float, mu_hat: np.ndarray) -> np.ndarray:
-    """
-    Encode the lam, mu, and mu_hat into a theta array.
-    
-    Returns an array of shape (2 + m,) where m is the length of mu_hat.
+    """Encode individual dual multipliers into a single theta array.
+
+    Args:
+        lam: IR constraint multiplier.
+        mu: FOC constraint multiplier.
+        mu_hat: IC constraint multipliers, shape (m,).
+
+    Returns:
+        Combined multiplier array of shape (2 + m,).
     """
     return np.concatenate([np.array([lam, mu], dtype=np.float64), np.atleast_1d(mu_hat).astype(np.float64)])
 
 def _pad_theta_for_warm_start(theta: np.ndarray, target_m: int) -> np.ndarray:
-    """
-    Pad a theta vector to match a target number of mu_hat components.
-    
-    If theta has shape (2,), pads with zeros to shape (2 + target_m,).
-    If theta already has the correct shape, returns it unchanged.
-    If theta has more components than needed, truncates (though this is unusual).
-    
+    """Pad or truncate theta vector to match target IC constraint count.
+
+    Used for warm-starting when the number of IC constraints changes
+    between iterations.
+
     Args:
-        theta: Current theta vector, shape (2,) or (2 + m,)
-        target_m: Target number of mu_hat components
-        
+        theta: Current theta vector, shape (2,) or (2 + m,).
+        target_m: Target number of mu_hat (IC) components.
+
     Returns:
-        Padded theta vector of shape (2 + target_m,)
+        Adjusted theta vector of shape (2 + target_m,). Pads with zeros
+        if too short, truncates if too long.
     """
     current_shape = theta.shape[0]
     target_shape = 2 + target_m
@@ -71,11 +88,20 @@ def _dual_value_and_grad(
     problem: "MoralHazardProblem",
     Ubar: float,
 ) -> Tuple[float, np.ndarray]:
-    """
-    Return (obj, grad) for a minimizer, where obj = -g_dual(θ)
-    and grad = -∇g_dual(θ) with ∇ via Danskin on the inner optimum v*(θ).
+    """Compute negative dual objective and gradient for scipy minimizer.
 
-    Assumes types already validated upstream.
+    Returns (obj, grad) where obj = -g_dual(θ) and grad = -∇g_dual(θ).
+    The gradient uses Danskin's theorem on the inner optimum v*(θ).
+
+    Args:
+        theta: Combined multiplier array of shape (2 + m,).
+        cache: Precomputed arrays from _make_cache.
+        problem: The MoralHazardProblem instance.
+        Ubar: Agent's reservation utility.
+
+    Returns:
+        A tuple (objective, gradient) for use with scipy.optimize.minimize.
+        Both are negated since scipy minimizes but we want to maximize.
     """
     m = cache["R"].shape[0]
 
@@ -116,11 +142,33 @@ def _maximize_lagrange_dual(
     reparametrize: str | None = None,
     raise_on_failure: bool = True,
 ) -> tuple[DualMaximizerResults, np.ndarray]:
-    """
-    Maximizes the Lagrange dual given a0, Ubar, and a_hat.
-    
-    If raise_on_failure=True (default), raises RuntimeError on solver failure.
-    If raise_on_failure=False, returns results with success=False for debugging.
+    """Maximize the Lagrange dual for a fixed set of constraints.
+
+    Solves the dual problem to find optimal multipliers and the corresponding
+    contract for a given intended action a0, reservation utility Ubar, and
+    set of IC constraint actions a_hat.
+w
+    Args:
+        a0: The intended action to implement.
+        Ubar: Agent's reservation utility.
+        a_hat: Array of actions for global IC constraints, shape (m,).
+        problem: The MoralHazardProblem instance.
+        theta_init: Initial guess for multipliers. If None, uses zeros.
+        maxiter: Maximum optimizer iterations. Defaults to 1000.
+        ftol: Function tolerance for convergence. Defaults to 1e-8.
+        clip_ratio: Ratio clipping for numerical stability. Defaults to 1e6.
+        reparametrize: Reparametrization method for positivity constraints.
+            One of None (L-BFGS-B bounds), "softplus", or "log".
+        raise_on_failure: If True (default), raises RuntimeError on failure.
+            If False, returns results with success=False for debugging.
+
+    Returns:
+        A tuple (results, theta_opt) where:
+            - results: DualMaximizerResults with contract and diagnostics.
+            - theta_opt: Optimal multiplier array of shape (2 + m,).
+
+    Raises:
+        RuntimeError: If solver fails and raise_on_failure is True.
     """
 
     # Build cache
@@ -302,12 +350,27 @@ def _maximize_lagrange_dual_with_fallback(
     clip_ratio: float = 1e6,
     reparametrize_pecking_order: list[str] = [None, "softplus", "log"],
 ) -> tuple[DualMaximizerResults, np.ndarray]:
-    """
-    Maximizes the Lagrange dual given a0, Ubar, and a_hat.
-    Simple wrapper to handle fallbacks if the solver fails.
-    
-    If all reparametrizations fail, issues a warning and returns the last
-    result (with success=False) for debugging instead of raising an error.
+    """Maximize the Lagrange dual with automatic fallback on failure.
+
+    Tries different reparametrization strategies in order until one succeeds.
+    If all fail, issues a warning and returns the last result for debugging.
+
+    Args:
+        a0: The intended action to implement.
+        Ubar: Agent's reservation utility.
+        a_hat: Array of actions for global IC constraints, shape (m,).
+        problem: The MoralHazardProblem instance.
+        theta_init: Initial guess for multipliers. If None, uses zeros.
+        maxiter: Maximum optimizer iterations. Defaults to 1000.
+        ftol: Function tolerance for convergence. Defaults to 1e-8.
+        clip_ratio: Ratio clipping for numerical stability. Defaults to 1e6.
+        reparametrize_pecking_order: List of reparametrization methods to
+            try in order. Defaults to [None, "softplus", "log"].
+
+    Returns:
+        A tuple (results, theta_opt) where:
+            - results: DualMaximizerResults with contract and diagnostics.
+            - theta_opt: Optimal multiplier array of shape (2 + m,).
     """
     last_result = None
     last_theta = None
@@ -366,10 +429,32 @@ def _minimize_cost_internal(
     a_ic_ub: float = np.inf,
     a_always_check_global_ic: np.ndarray = np.array([0.0]),
 ) -> CostMinimizationResults:
-    """
-    Internal method to solve cost minimization problem. Calls maximize_lagrange_dual as needed.
-    First solves relaxed problem (a_hat = []).
-    Then finds largest global IC violation, and iteratively adds biggest constraint violation to a_hat. Warm starts contract from the relaxed optimal.
+    """Solve the cost minimization problem with iterative IC constraint addition.
+
+    Implements the iterative algorithm:
+        1. Solve relaxed problem (no global IC constraints).
+        2. Find action with largest global IC violation.
+        3. Add violating action to constraint set and re-solve.
+        4. Repeat until no violations or max iterations reached.
+
+    Uses warm-starting from previous iteration's solution.
+
+    Args:
+        intended_action: The action a0 to implement.
+        reservation_utility: Agent's reservation utility Ubar.
+        problem: The MoralHazardProblem instance.
+        n_a_iterations: Maximum iterations for adding IC constraints.
+            Set to 0 to solve only the relaxed problem. Defaults to 10.
+        theta_init: Initial guess for multipliers. If None, uses zeros.
+        clip_ratio: Ratio clipping for numerical stability. Defaults to 1e6.
+        a_ic_lb: Lower bound for IC violation search. Defaults to 0.
+        a_ic_ub: Upper bound for IC violation search. Defaults to inf.
+        a_always_check_global_ic: Actions to always include in IC check
+            on first violation. Defaults to [0.0].
+
+    Returns:
+        CostMinimizationResults containing optimal contract, expected wage,
+        constraint diagnostics, and iteration traces.
     """
     # Initialize traces
     a_hat_trace: list[np.ndarray] = []
@@ -378,6 +463,7 @@ def _minimize_cost_internal(
     best_action_distance_trace: list[float] = []
     best_action_trace: list[float] = []
     foa_flag = None if n_a_iterations == 0 else True
+    cvxpy_fallback = False
     
     # Solve relaxed problem
     a_hat = np.array([], dtype=np.float64)
@@ -433,12 +519,12 @@ def _minimize_cost_internal(
             iterations += 1
             
             # Check if we need CVXPY fallback:
-            # 1. Solver failed (success=False)
+            # 1. Solver failed (success=False) or
             # 2. Best action is repeated (already in a_hat, so we wouldn't grow)
             solver_failed = not results_dual.solver_state.get('success', True)
             best_action_repeated = a_best in a_hat
             
-            if solver_failed or best_action_repeated:
+            if (solver_failed or best_action_repeated) and (cvxpy_fallback is False):
                 # CVXPY fallback: find binding constraints using CVXPY
                 reason = "solver failed" if solver_failed else "best action repeated"
                 warnings.warn(
@@ -446,6 +532,7 @@ def _minimize_cost_internal(
                     f"Running CVXPY with 100 a_hats to find binding IC constraints.",
                     RuntimeWarning
                 )
+                cvxpy_fallback = True
                 
                 try:
                     binding_actions, cvxpy_result = _find_binding_ic_actions_cvxpy(

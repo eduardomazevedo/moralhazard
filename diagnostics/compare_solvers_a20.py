@@ -223,6 +223,6 @@ fig.text(0.5, 0.02, summary_text, ha='center', fontsize=10,
          bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
 plt.tight_layout(rect=[0, 0.08, 1, 0.96])
-plt.savefig('diagnostics/output/solver_comparison_a20.png', dpi=150)
+plt.savefig('diagnostics/figures/solver_comparison_a20.png', dpi=150)
 plt.close(fig)
-print(f"\nPlot saved to diagnostics/output/solver_comparison_a20.png")
+print(f"\nPlot saved to diagnostics/figures/solver_comparison_a20.png")

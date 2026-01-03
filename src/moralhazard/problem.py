@@ -1,4 +1,8 @@
-# moral_hazard/problem.py
+"""Main MoralHazardProblem class and public API.
+
+This module provides the primary interface for configuring moral hazard problems
+and solving cost minimization and principal's profit maximization problems.
+"""
 from __future__ import annotations
 
 from typing import Dict, Any, Callable
@@ -13,46 +17,59 @@ from .core import _compute_expected_utility
 
 
 class MoralHazardProblem:
-    """
-    Public entry point.
+    """Main interface for configuring and solving moral hazard problems. Notation follows Azevedo and Woff (2025).
 
-    Construction
-    ------------
-    mhp = MoralHazardProblem(cfg)
+    Callables should work with numpy arrays and be broadcastable.
+    If using CVXPY, the k callable should accept an xp argument for either numpy or cvxpy defaulting to numpy.
+    Example: def k(v, xp=np): return xp.exp(v) - x0
 
-    Required cfg structure:
-      cfg = {
-          "problem_params": {
-              "u": callable,           # utility function (from dollars -> utils, like u(x) = log(x0 + x))
-              "k": callable,           # k function (cost of compensation from utils -> dollars, like k(x) = exp(utils) - x0)
-              "link_function": callable, # link function as in the paper, eg np.log(np.maximum(z, x0))
-              "C": callable,           # cost function, eg C(a) = a^2
-              "Cprime": callable,      # derivative of cost function, eg Cprime(a) = 2*a
-              "f": callable,           # f function, eg f(y|a) = normal(y|a, sigma)
-              "score": callable        # score function, eg score(y|a) = (y - a) / sigma^2
-          },
-          "computational_params": {
-              "distribution_type": str, # either "continuous" or "discrete"
-              "y_min": float,          # minimum outcome value
-              "y_max": float,          # maximum outcome value
-              # For continuous: "n": int (number of grid points, must be odd)
-              # For discrete: "step_size": float (step size that perfectly divides y_max - y_min)
-          }
-      }
+    Args:
+        cfg: Configuration dictionary with the following structure::
 
-    Validates:
-      - cfg is a dict with 'problem_params' and 'computational_params'
-      - required callables exist and are callable
-      - computational_params must include distribution_type, y_min, y_max
-      - For continuous: must include n (odd)
-      - For discrete: must include step_size that perfectly divides y_max - y_min
+            {
+                "problem_params": {
+                    "u": callable,           # Utility function (dollars -> utils)
+                    "k": callable,           # Inverse utility (utils -> dollars)
+                    "link_function": callable,  # Link function (Azevedo and Woff's g())
+                    "C": callable,           # Cost of effort function
+                    "Cprime": callable,      # Derivative of cost function
+                    "f": callable,           # Density/PMF f(y|a)
+                    "score": callable        # Score function d/da log f(y|a)
+                },
+                "computational_params": {
+                    "distribution_type": str,  # "continuous" or "discrete"
+                    "y_min": float,           # Minimum outcome value
+                    "y_max": float,           # Maximum outcome value
+                    # For continuous: "n": int (grid points, must be odd because of Simpson's rule)
+                    # For discrete: "step_size": float
+                }
+            }
 
-    Side effects:
-      - stores _y_grid (length n) and Simpson weights _w (length n)
-      - stores primitives in _primitives (dict with keys u, k, g, C, Cprime, f, score)
+    Raises:
+        TypeError: If cfg is not a dict with required keys.
+        KeyError: If required parameters are missing.
+        ValueError: If parameter values are invalid.
+
+    Attributes:
+        y_grid: Read-only outcome grid, shape (n,).
+        w: Read-only integration weights, shape (n,).
+
+    Example:
+        >>> cfg = {
+        ...     "problem_params": {...},
+        ...     "computational_params": {"distribution_type": "continuous", ...}
+        ... }
+        >>> problem = MoralHazardProblem(cfg)
+        >>> result = problem.solve_cost_minimization_problem(
+        ...     intended_action=1.0,
+        ...     reservation_utility=0.0,
+        ...     a_ic_lb=0.0,
+        ...     a_ic_ub=2.0
+        ... )
     """
 
     def __init__(self, cfg: dict) -> None:
+        """Initialize the MoralHazardProblem from configuration."""
         if not isinstance(cfg, dict) or "problem_params" not in cfg or "computational_params" not in cfg:
             raise TypeError("cfg must be a dict with 'problem_params' and 'computational_params'")
 
@@ -127,7 +144,14 @@ class MoralHazardProblem:
         return self._primitives["k"]
 
     def k(self, v: np.ndarray) -> np.ndarray:
-        """Convenience passthrough to problem_params['k']."""
+        """Compute monetary cost of providing utility values.
+
+        Args:
+            v: Utility values, any shape.
+
+        Returns:
+            Monetary values k(v) with the same shape as v.
+        """
         return self._primitives["k"](v)
 
 
@@ -138,19 +162,19 @@ class MoralHazardProblem:
         reservation_utility: float,
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_iterations: int = 10,
+        n_a_iterations: int = 100,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
         a_always_check_global_ic: np.ndarray = np.array([0.0])
     ) -> CostMinimizationResults:
         """
-        Solve the dual for the cost-minimizing contract at a given intended action a0.
+        Solve cost minimization problem for a given intended action a0 using Azevedo and Woff's (2025) algorithm 1.
 
         Args:
             intended_action: The intended action a0
             reservation_utility: The reservation utility Ubar
-            n_a_iterations: Number of iterations for iterative solver. Defaults to 10. Set to 0 to solve the relaxed problem with no global IC constraints.
-            theta_init: Optional initial theta for warm-starting.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 100. Set to 0 to solve the relaxed problem with no global IC constraints.
+            theta_init: Optional initial theta for warm-starting. If theta is for a subset of multipliers, it will be padded with zeros.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
             a_ic_lb: Lower bound for action search when using iterative solver (default: 0)
             a_ic_ub: Upper bound for action search when using iterative solver (default: infinity)
@@ -179,7 +203,7 @@ class MoralHazardProblem:
         reservation_utility: float,
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_iterations: int = 10,
+        n_a_iterations: int = 100,
         theta_init: np.ndarray | None = None,
         clip_ratio: float = 1e6,
         a_always_check_global_ic: np.ndarray = np.array([0.0]),
@@ -192,7 +216,7 @@ class MoralHazardProblem:
             reservation_utility: The reservation utility Ubar
             a_ic_lb: Lower bound for action search in iterative solver
             a_ic_ub: Upper bound for action search in iterative solver
-            n_a_iterations: Number of iterations for iterative solver. Defaults to 10.
+            n_a_iterations: Number of iterations for iterative solver. Defaults to 100.
             theta_init: Optional initial theta for warm-starting.
             clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
             a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0.0].
@@ -252,7 +276,9 @@ class MoralHazardProblem:
         
         This is an alternative to solve_cost_minimization_problem() that uses
         direct convex optimization rather than the dual approach. Requires the
-        k function to accept an xp argument: k(v, xp=np).
+        k function to accept an xp argument: k(v, xp=np). Solves for
+        the discretized contract v(y_grid) checking only global IC
+        at discretized actions in a_hat, plus IR and local IC.
         
         Args:
             intended_action: The action a0 to implement.
@@ -292,7 +318,7 @@ class MoralHazardProblem:
         """
         Compute minimum expected wage for multiple actions using CVXPY.
         
-        Efficient batch computation using CVXPY Parameters. Requires 
+        Requires 
         intended_actions to be a subset of a_hat.
         
         Args:
@@ -315,15 +341,19 @@ class MoralHazardProblem:
         )
 
     def U(self, v: np.ndarray, a: float | np.ndarray) -> float | np.ndarray:
-        """
-        U(a) = ∫ v(y) f(y|a) dy - C(a), evaluated on the internal Simpson grid.
+        """Compute agent's expected utility for a given contract and action(s).
 
-        Inputs:
-          - v : must have shape equal to self.y_grid.shape
-          - a : scalar or 1D array
+        Evaluates U(a) = ∫ v(y) f(y|a) dy - C(a) using numerical integration
+        on the internal grid.
+
+        Args:
+            v: Contract values on the grid, must have shape (n,) matching
+                self.y_grid.shape.
+            a: Action(s) to evaluate. Can be a scalar or 1D array.
 
         Returns:
-          - scalar if a is scalar; 1D array otherwise
+            Expected utility. Returns a scalar if a is scalar, otherwise
+            returns an array with the same shape as a.
         """
         # Entry point: convert to numpy arrays
         v_arr = np.asarray(v, dtype=np.float64)
@@ -345,22 +375,40 @@ class MoralHazardProblem:
         a_min: float,
         a_max: float,
         *,
-        # options forwarded to expected_wage_fun(...)
         a_ic_lb: float,
         a_ic_ub: float,
-        n_a_iterations: int = 10,
+        n_a_iterations: int = 100,
         clip_ratio: float = 1e6,
         a_always_check_global_ic: np.ndarray = np.array([0.0]),
-        # options forwarded to the outer line search
         minimize_scalar_options: dict | None = None,
     ) -> PrincipalSolveResults:
-        """
-        Public API: principal's outer problem via line search over actions.
+        """Solve the principal's profit maximization problem.
 
-        1) Build expected_wage_fun(a) for the given Ubar and solver params.
-        2) Line-search a ∈ [a_min, a_max] to maximize revenue(a) - E[w(a)].
-        3) Solve the inner cost-minimization problem at the optimal action.
-        4) Return a PrincipalSolveResults bundle.
+        Finds the optimal action a* that maximizes revenue(a) - E[w(a)] where
+        E[w(a)] is the minimum expected wage to implement action a.
+
+        The algorithm:
+            1. Constructs E[w(a)] using the cost minimization solver.
+            2. Line-searches over a ∈ [a_min, a_max] to maximize profit.
+            3. Solves the inner cost-minimization at the optimal action.
+
+        Args:
+            revenue_function: Function R(a) -> revenue from implementing action a.
+            reservation_utility: Agent's reservation utility Ubar.
+            a_min: Lower bound of action search range.
+            a_max: Upper bound of action search range.
+            a_ic_lb: Lower bound for IC constraint actions.
+            a_ic_ub: Upper bound for IC constraint actions.
+            n_a_iterations: Number of iterations for iterative IC solver.
+                Defaults to 100.
+            clip_ratio: Maximum ratio clipping value. Defaults to 1e6.
+            a_always_check_global_ic: Actions to always check for IC violations.
+                Defaults to [0.0].
+            minimize_scalar_options: Options passed to scipy.optimize.minimize_scalar.
+
+        Returns:
+            PrincipalSolveResults containing optimal action, profit, and
+            the cost minimization result at the optimum.
         """
         # 1) Construct E[w(a)] wrapper function using minimum_cost
         def Ew(a: float) -> float:
@@ -410,29 +458,24 @@ class MoralHazardProblem:
         v_lb: float = None,
         v_ub: float = None,
     ) -> PrincipalSolveResults:
-        """
-        Principal's problem using CVXPY with full discretization.
-        
-        Simple approach:
-        1. Use discretized_a_grid as both intended actions AND a_hat for IC
-        2. Compute minimum cost for all actions using batch CVXPY solver
-        3. Find action with highest profit = revenue(a) - E[w(a)]
-        
-        Parameters
-        ----------
-        revenue_function : callable
-            R(a) -> revenue from action a
-        reservation_utility : float
-            Agent's reservation utility Ubar
-        discretized_a_grid : np.ndarray
-            Grid of actions (used for both intended actions and IC constraints)
-        v_lb, v_ub : float, optional
-            Bounds on contract v(y). If None, inferred from u.
-            
-        Returns
-        -------
-        PrincipalSolveResults
-            Optimal action, profit, and cost minimization result at optimum.
+        """Solve the principal's problem using CVXPY with discretized actions.
+
+        Uses the discretized action grid for both intended actions and IC
+        constraints. Computes minimum cost for all actions using the batch
+        CVXPY solver and finds the action with highest profit.
+
+        Args:
+            revenue_function: Function R(a) -> revenue from action a.
+            reservation_utility: Agent's reservation utility Ubar.
+            discretized_a_grid: Grid of actions used for both optimization
+                and IC constraints.
+            v_lb: Lower bound on contract v(y). If None, inferred from u(0).
+            v_ub: Upper bound on contract v(y). Required for CARA/CRRA with
+                γ > 1 (typically 0).
+
+        Returns:
+            PrincipalSolveResults containing optimal action, profit, and
+            the cost minimization result at the optimum.
         """
         a_grid = np.asarray(discretized_a_grid)
         

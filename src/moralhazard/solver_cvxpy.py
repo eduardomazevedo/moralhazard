@@ -1,9 +1,9 @@
-# solver_cvxpy.py
 """
 CVXPY-based solvers for the moral hazard cost minimization problem.
 
-These solvers formulate the problem as a convex optimization problem and solve
-it directly using CVXPY, rather than using the dual approach in solver.py.
+These solvers formulate the problem as a disciplined convex optimization problem and solve
+it directly using CVXPY, rather than using the dual algorithm 1 approach in solver.py.
+The variables are v(y_grid) and we only consider discrete number of deviations a_hat.
 
 Requirements:
 - The inverse utility function k must accept an `xp` argument to specify the
@@ -25,8 +25,12 @@ if TYPE_CHECKING:
     from .problem import MoralHazardProblem
 
 
-def _check_cvxpy_available():
-    """Raise ImportError if cvxpy is not installed."""
+def _check_cvxpy_available() -> None:
+    """Check that cvxpy is available and raise informative error if not.
+
+    Raises:
+        ImportError: If cvxpy is not installed.
+    """
     if cp is None:
         raise ImportError(
             "cvxpy is required for CVXPY-based solvers. "
@@ -44,43 +48,35 @@ def _solve_cost_minimization_cvxpy(
     v_ub: float = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Internal: Solve the cost minimization problem using CVXPY.
-    
+    """Solve the cost minimization problem using CVXPY convex optimization.
+
     Minimizes E[k(v(y))] subject to:
-      - IR: E[v|a0] - C(a0) >= Ubar
-      - Local IC (FOC): E[v * score|a0] = C'(a0)
-      - Global IC: U(a0) >= U(a_hat) for each action in a_hat
-      - Optional: v_lb <= v <= v_ub
-    
-    Parameters
-    ----------
-    intended_action : float
-        The action a0 to implement.
-    reservation_utility : float
-        The agent's reservation utility Ubar.
-    problem : MoralHazardProblem
-        The moral hazard problem instance.
-        The k function must accept xp argument: k(v, xp=np).
-    a_hat : np.ndarray, optional
-        Array of alternative actions for global IC constraints.
-        If None or empty, only IR and FOC constraints are enforced.
-    v_lb : float, optional
-        Lower bound on v(y). If None, inferred from u(0).
-    v_ub : float, optional
-        Upper bound on v(y). Required for CARA/CRRA γ>1 (typically v_ub=0).
-    verbose : bool, default False
-        If True, print solver output.
-    
-    Returns
-    -------
-    dict
+        - IR: E[v|a0] - C(a0) >= Ubar
+        - Local IC (FOC): E[v * score|a0] = C'(a0)
+        - Global IC: U(a0) >= U(a_hat) for each action in a_hat
+        - Optional bounds: v_lb <= v <= v_ub
+
+    Args:
+        intended_action: The action a0 to implement.
+        reservation_utility: The agent's reservation utility Ubar.
+        problem: The MoralHazardProblem instance. The k function must
+            accept an xp argument: k(v, xp=np).
+        a_hat: Array of alternative actions for global IC constraints.
+            If None or empty, only IR and FOC constraints are enforced.
+        v_lb: Lower bound on v(y). If None, inferred from u(0).
+        v_ub: Upper bound on v(y). Required for CARA/CRRA with γ > 1
+            (typically v_ub=0).
+        verbose: If True, print solver output. Defaults to False.
+
+    Returns:
         Dictionary with keys:
-        - 'status': solver status string
-        - 'optimal_contract': v(y) array if optimal, else None
-        - 'expected_wage': E[k(v)] if optimal, else None
-        - 'agent_utility': U(a0) if optimal, else None
-        - 'objective_value': raw objective value from CVXPY
+            - 'status': Solver status string.
+            - 'optimal_contract': v(y) array if optimal, else None.
+            - 'expected_wage': E[k(v)] if optimal, else None.
+            - 'agent_utility': U(a0) if optimal, else None.
+            - 'objective_value': Raw objective value from CVXPY.
+            - 'ic_slack': IC constraint slack values if m > 0.
+            - 'a_hat': The a_hat array used.
     """
     _check_cvxpy_available()
     
@@ -186,32 +182,27 @@ def _find_binding_ic_actions_cvxpy(
     v_lb: float = None,
     v_ub: float = None,
 ) -> tuple[np.ndarray, dict]:
-    """
-    Run CVXPY solver with many a_hats and find binding IC constraints.
-    
-    Parameters
-    ----------
-    intended_action : float
-        The action a0 to implement.
-    reservation_utility : float
-        The agent's reservation utility.
-    problem : MoralHazardProblem
-        The problem instance.
-    a_ic_lb, a_ic_ub : float
-        Range for a_hat actions.
-    n_a_hat : int
-        Number of a_hat points to use.
-    binding_tol : float
-        Tolerance for considering a constraint binding.
-    v_lb, v_ub : float, optional
-        Bounds on v(y).
-    
-    Returns
-    -------
-    binding_actions : np.ndarray
-        Actions where IC constraint is binding (slack < binding_tol).
-    cvxpy_result : dict
-        Full result from CVXPY solver.
+    """Find binding IC constraints by solving with dense action grid.
+
+    Runs CVXPY solver with a dense grid of a_hat actions and identifies
+    which IC constraints are binding (have near-zero slack).
+
+    Args:
+        intended_action: The action a0 to implement.
+        reservation_utility: The agent's reservation utility.
+        problem: The MoralHazardProblem instance.
+        a_ic_lb: Lower bound for a_hat action range. Defaults to 0.0.
+        a_ic_ub: Upper bound for a_hat action range. Defaults to 100.0.
+        n_a_hat: Number of a_hat grid points. Defaults to 100.
+        binding_tol: Tolerance for considering a constraint binding.
+            Constraints with slack < binding_tol are binding. Defaults to 1e-4.
+        v_lb: Lower bound on v(y). If None, inferred from u(0).
+        v_ub: Upper bound on v(y). Required for CARA/CRRA with γ > 1.
+
+    Returns:
+        A tuple (binding_actions, cvxpy_result) where:
+            - binding_actions: Array of actions with binding IC constraints.
+            - cvxpy_result: Full result dictionary from CVXPY solver.
     """
     _check_cvxpy_available()
     
@@ -249,31 +240,27 @@ def _minimum_cost_cvxpy(
     v_lb: float = None,
     v_ub: float = None,
 ) -> np.ndarray:
-    """
-    Internal: Compute minimum expected wage for multiple intended actions using CVXPY.
-    
-    Uses CVXPY Parameters for efficiency when solving multiple similar problems.
-    Requires intended_actions to be a subset of a_hat.
-    
-    Parameters
-    ----------
-    intended_actions : np.ndarray
-        1D array of actions to implement. Must be a subset of a_hat.
-    reservation_utility : float
-        The agent's reservation utility Ubar.
-    a_hat : np.ndarray
-        1D array of all actions for global IC constraints.
-    problem : MoralHazardProblem
-        The moral hazard problem instance.
-    v_lb : float, optional
-        Lower bound on v(y). If None, inferred from u(0).
-    v_ub : float, optional
-        Upper bound on v(y). Required for CARA/CRRA γ>1.
-    
-    Returns
-    -------
-    np.ndarray
+    """Compute minimum expected wage for multiple actions using CVXPY.
+
+    Efficiently solves multiple similar problems using CVXPY Parameters.
+    Requires intended_actions to be a subset of a_hat for constraint
+    matrix reuse.
+
+    Args:
+        intended_actions: 1D array of actions to implement. Must be a
+            subset of a_hat.
+        reservation_utility: The agent's reservation utility Ubar.
+        a_hat: 1D array of all actions for global IC constraints.
+        problem: The MoralHazardProblem instance.
+        v_lb: Lower bound on v(y). If None, inferred from u(0).
+        v_ub: Upper bound on v(y). Required for CARA/CRRA with γ > 1.
+
+    Returns:
         1D array of minimum expected wages, same length as intended_actions.
+        Returns np.nan for actions where the solver fails.
+
+    Raises:
+        ValueError: If any action in intended_actions is not in a_hat.
     """
     _check_cvxpy_available()
     
