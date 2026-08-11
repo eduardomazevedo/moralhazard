@@ -29,15 +29,15 @@ def _make_cache(
         a0: The intended action.
         a_hat: Array of comparison actions for global IC constraints, shape (m,).
         problem: The MoralHazardProblem instance containing primitives.
-        clip_ratio: Maximum absolute value for ratio clipping to prevent
-            numerical instability. Defaults to 1e6.
+        clip_ratio: Deprecated compatibility argument. Ratios are no longer
+            clipped because doing so made the dual inconsistent.
 
     Returns:
         Dictionary with precomputed arrays (m = len(a_hat), n = len(y_grid)):
             - f0: Density at a0, shape (n,).
             - s0: Score at a0, shape (n,).
             - D: Density matrix at a_hat, shape (m, n).
-            - R: Ratio matrix 1 - D/f0, shape (m, n).
+            - density_diff: Density differences f0 - D, shape (m, n).
             - wf0: Weighted density w * f0, shape (n,).
             - wf0s0: Weighted density times score w * f0 * s0, shape (n,).
             - weighted_D: Weighted density matrix w * D, shape (m, n).
@@ -63,15 +63,13 @@ def _make_cache(
     wf0 = w * f0
     wf0s0 = wf0 * s0
 
-    # Ratio for the global IC constraints: R = 1 - D / f0 (broadcast along columns)
-    # Add numerical safeguards to prevent extreme values that could cause optimization issues
-    # D is (m, n), f0 is (n,), so we broadcast f0 along rows
-    f0_safe = np.maximum(f0, 1e-12)  # Ensure f0 is not too small
-    ratio = D / f0_safe[None, :]  # (m, n)
-    
-    # Clip the ratio to prevent extreme values that could destabilize the dual optimization
-    ratio_clipped = np.clip(ratio, -clip_ratio, clip_ratio)
-    R = 1.0 - ratio_clipped  # (m, n)
+    # Keep the pointwise Lagrangian in density-difference form.  Forming
+    # 1 - D/f0 here used to require flooring f0 and clipping the ratio.  That
+    # made the canonical contract solve a different finite problem from the
+    # constraints and therefore invalidated the supplied Danskin gradient.
+    # Delaying division until after the multiplier-weighted differences have
+    # been summed is both more stable and exactly consistent with D below.
+    density_diff = f0[None, :] - D
 
     # Precompute C-related terms
     C0 = C(a0)
@@ -85,7 +83,7 @@ def _make_cache(
         "f0": f0,
         "s0": s0,
         "D": D,
-        "R": R,
+        "density_diff": density_diff,
         "wf0": wf0,
         "wf0s0": wf0s0,
         "weighted_D": weighted_D,
@@ -99,28 +97,40 @@ def _canonical_contract(
     lam: float,
     mu: float,
     mu_hat: np.ndarray,
-    s0: np.ndarray,
-    R: np.ndarray,
+    f0: np.ndarray,
+    f0s0: np.ndarray,
+    density_diff: np.ndarray,
     problem: "MoralHazardProblem",
 ) -> np.ndarray:
     """Compute the canonical contract from dual multipliers.
 
-    Implements the contract map v = g(λ + μ s0 + μ̂ᵀ R) where g is the
-    link function from the problem primitives.
+    Implements the contract map without explicitly constructing likelihood
+    ratios.  Its index is
+    ``(λ f0 + μ f0 s0 + μ̂ᵀ(f0 - D)) / f0``.
 
     Args:
         lam: IR (individual rationality) constraint multiplier.
         mu: FOC (first-order condition) constraint multiplier.
         mu_hat: IC (incentive compatibility) constraint multipliers, shape (m,).
-        s0: Score function evaluated at a0 on the grid, shape (n,).
-        R: Ratio matrix from the cache, shape (m, n).
+        f0: Density at the intended action, shape (n,).
+        f0s0: Density times score at the intended action, shape (n,).
+        density_diff: Rows ``f0 - f(a_hat)``, shape (m, n).
         problem: The MoralHazardProblem instance containing primitives.
 
     Returns:
         The optimal contract v evaluated on the grid, shape (n,).
     """
     g = problem.g
-    z = lam + mu * s0 + (mu_hat @ R)
+    numerator = lam * f0 + mu * f0s0 + (mu_hat @ density_diff)
+    # Positive densities are assumed by the likelihood-ratio formulation in
+    # Algorithm 1.  Preserve meaningful limiting signs if a user-supplied
+    # density underflows at isolated grid points rather than clipping it.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = np.divide(numerator, f0)
+    zero_density = f0 == 0
+    if np.any(zero_density):
+        z = np.asarray(z)
+        z[zero_density & (numerator == 0)] = lam
     v = g(z)
     return v
 

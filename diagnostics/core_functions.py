@@ -91,7 +91,7 @@ for key in ["f0", "s0", "wf0", "wf0s0"]:
     print(f"    {key} = {val}")
     print()
 
-for key in ["D", "R", "weighted_D"]:
+for key in ["D", "density_diff", "weighted_D"]:
     val = cache[key]
     print(f"  {key}: shape={val.shape}, dtype={val.dtype}")
     if val.ndim == 2:
@@ -142,7 +142,7 @@ for key in ["f0", "s0", "wf0", "wf0s0"]:
     print(f"    {key} = {val}")
     print()
 
-for key in ["D", "R", "weighted_D"]:
+for key in ["D", "density_diff", "weighted_D"]:
     val = cache_empty[key]
     print(f"  {key}: shape={val.shape}, dtype={val.dtype}")
     if val.ndim == 2:
@@ -177,15 +177,17 @@ print("=" * 70)
 lam = 100.0
 mu = 100.0
 mu_hat = np.array([0.1, 0.2])
-s0 = cache["s0"]
-R = cache["R"]
+f0 = cache["f0"]
+f0s0 = f0 * cache["s0"]
+density_diff = cache["density_diff"]
 
 v = _canonical_contract(
     lam=lam,
     mu=mu,
     mu_hat=mu_hat,
-    s0=s0,
-    R=R,
+    f0=f0,
+    f0s0=f0s0,
+    density_diff=density_diff,
     problem=mhp,
 )
 
@@ -193,8 +195,8 @@ print(f"Inputs:")
 print(f"  lam = {lam}")
 print(f"  mu = {mu}")
 print(f"  mu_hat = {mu_hat}")
-print(f"  s0 shape: {s0.shape}")
-print(f"  R shape: {R.shape}")
+print(f"  f0 shape: {f0.shape}")
+print(f"  density_diff shape: {density_diff.shape}")
 print()
 
 print(f"Output:")

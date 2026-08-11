@@ -175,7 +175,8 @@ class MoralHazardProblem:
             reservation_utility: The reservation utility Ubar
             n_a_iterations: Number of iterations for iterative solver. Defaults to 100. Set to 0 to solve the relaxed problem with no global IC constraints.
             theta_init: Optional initial theta for warm-starting. If theta is for a subset of multipliers, it will be padded with zeros.
-            clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
+            clip_ratio: Deprecated compatibility argument; likelihood ratios
+                are no longer clipped.
             a_ic_lb: Lower bound for action search when using iterative solver (default: 0)
             a_ic_ub: Upper bound for action search when using iterative solver (default: infinity)
             a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0].
@@ -218,7 +219,8 @@ class MoralHazardProblem:
             a_ic_ub: Upper bound for action search in iterative solver
             n_a_iterations: Number of iterations for iterative solver. Defaults to 100.
             theta_init: Optional initial theta for warm-starting.
-            clip_ratio: Maximum absolute value for ratio clipping in cache construction. Defaults to 1e6.
+            clip_ratio: Deprecated compatibility argument; likelihood ratios
+                are no longer clipped.
             a_always_check_global_ic: Vector of a values where we always check global IC violation. Defaults to [0.0].
 
         Returns:
@@ -401,7 +403,8 @@ class MoralHazardProblem:
             a_ic_ub: Upper bound for IC constraint actions.
             n_a_iterations: Number of iterations for iterative IC solver.
                 Defaults to 100.
-            clip_ratio: Maximum ratio clipping value. Defaults to 1e6.
+            clip_ratio: Deprecated compatibility argument; likelihood ratios
+                are no longer clipped.
             a_always_check_global_ic: Actions to always check for IC violations.
                 Defaults to [0.0].
             minimize_scalar_options: Options passed to scipy.optimize.minimize_scalar.

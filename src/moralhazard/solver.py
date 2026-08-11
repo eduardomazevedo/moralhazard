@@ -103,12 +103,15 @@ def _dual_value_and_grad(
         A tuple (objective, gradient) for use with scipy.optimize.minimize.
         Both are negated since scipy minimizes but we want to maximize.
     """
-    m = cache["R"].shape[0]
+    m = cache["density_diff"].shape[0]
 
     lam, mu, mu_hat = _decode_theta(theta)
 
     # Inner optimum v*(θ) via canonical map
-    v = _canonical_contract(lam, mu, mu_hat, cache["s0"], cache["R"], problem)
+    v = _canonical_contract(
+        lam, mu, mu_hat, cache["f0"], cache["f0"] * cache["s0"],
+        cache["density_diff"], problem,
+    )
 
     # Constraints at v
     cons = _constraints(v, cache=cache, problem=problem, Ubar=Ubar)
@@ -137,7 +140,7 @@ def _maximize_lagrange_dual(
     problem: "MoralHazardProblem",
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
-    ftol: float = 1e-8,
+    ftol: float = 1e-12,
     clip_ratio: float = 1e6,
     reparametrize: str | None = None,
     raise_on_failure: bool = True,
@@ -155,8 +158,9 @@ w
         problem: The MoralHazardProblem instance.
         theta_init: Initial guess for multipliers. If None, uses zeros.
         maxiter: Maximum optimizer iterations. Defaults to 1000.
-        ftol: Function tolerance for convergence. Defaults to 1e-8.
-        clip_ratio: Ratio clipping for numerical stability. Defaults to 1e6.
+        ftol: Function tolerance for convergence. Defaults to 1e-12.
+        clip_ratio: Deprecated compatibility argument; likelihood ratios are
+            no longer clipped.
         reparametrize: Reparametrization method for positivity constraints.
             One of None (L-BFGS-B bounds), "softplus", or "log".
         raise_on_failure: If True (default), raises RuntimeError on failure.
@@ -180,7 +184,7 @@ w
     )
 
     # Initialization
-    m = int(cache["R"].shape[0])
+    m = int(cache["density_diff"].shape[0])
     expected_shape = (2 + m,)
     warn_flags: list[str] = []
 
@@ -264,12 +268,15 @@ w
         bounds_used = [(0.0, None)] + [(None, None)] + [(0.0, None)] * m
 
     # Solve
+    optimizer_options = {"maxiter": int(maxiter), "gtol": 1e-7}
+    if method_used == "L-BFGS-B":
+        optimizer_options["ftol"] = ftol
     minimize_kwargs = {
         "fun": fun,
         "x0": x0_used,
         "jac": True,
         "method": method_used,
-        "options": {"maxiter": int(maxiter), "ftol": ftol},
+        "options": optimizer_options,
         "args": (cache, problem, Ubar),
     }
     if bounds_used is not None:
@@ -278,14 +285,6 @@ w
     t0 = time.time()
     res = minimize(**minimize_kwargs)
     t1 = time.time()
-
-    # Check for solver failure
-    solver_failed = not res.success
-    if solver_failed:
-        msg = f"Solver failed with reparametrize={reparametrize}, status={res.status}, message='{res.message}'"
-        warnings.warn(msg, RuntimeWarning)
-        if raise_on_failure:
-            raise RuntimeError(msg)
 
     # Convert φ → θ for output
     theta_opt = res.x.copy()
@@ -316,9 +315,51 @@ w
     # Decode & evaluate
     lam_opt, mu_opt, mu_hat_opt = _decode_theta(theta_opt)
     v_star = _canonical_contract(
-        lam_opt, mu_opt, mu_hat_opt, cache["s0"], cache["R"], problem
+        lam_opt, mu_opt, mu_hat_opt, cache["f0"],
+        cache["f0"] * cache["s0"], cache["density_diff"], problem
     )
     cons = _constraints(v_star, cache=cache, problem=problem, Ubar=Ubar)
+
+    # SciPy's success flag alone is insufficient: L-BFGS-B may stop on a
+    # relative objective change while an imposed constraint is still violated.
+    # Check the KKT residual in the original multiplier coordinates.
+    _, objective_grad = _dual_value_and_grad(theta_opt, cache, problem, Ubar)
+    projected_grad = objective_grad.copy()
+    positive_indices = np.r_[0, np.arange(2, theta_opt.size)]
+    at_lower_bound = theta_opt[positive_indices] <= 1e-10
+    points_into_bound = objective_grad[positive_indices] >= 0
+    projected_grad[positive_indices[at_lower_bound & points_into_bound]] = 0.0
+    projected_grad_inf = float(np.max(np.abs(projected_grad), initial=0.0))
+    max_ic_violation = float(max(0.0, np.max(cons["IC"], initial=-np.inf)))
+    primal_residual = max(float(max(0.0, cons["IR"])), abs(float(cons["FOC"])), max_ic_violation)
+    complementarity = max(
+        abs(float(lam_opt * cons["IR"])),
+        float(np.max(np.abs(mu_hat_opt * cons["IC"]), initial=0.0)),
+    )
+    accepted = bool(
+        res.success
+        and np.isfinite(res.fun)
+        and projected_grad_inf <= 1e-4
+        and primal_residual <= 1e-5
+        and complementarity <= 1e-3
+    )
+    state.update({
+        "optimizer_success": bool(res.success),
+        "success": accepted,
+        "projected_grad_inf": projected_grad_inf,
+        "primal_residual": primal_residual,
+        "complementarity": complementarity,
+    })
+    if not accepted:
+        msg = (
+            f"Solver failed validation with reparametrize={reparametrize}, "
+            f"status={res.status}, projected_grad={projected_grad_inf:.3g}, "
+            f"primal_residual={primal_residual:.3g}, "
+            f"complementarity={complementarity:.3g}, message='{res.message}'"
+        )
+        if raise_on_failure:
+            warnings.warn(msg, RuntimeWarning)
+            raise RuntimeError(msg)
 
     results = DualMaximizerResults(
         optimal_contract=v_star,
@@ -346,7 +387,7 @@ def _maximize_lagrange_dual_with_fallback(
     problem: "MoralHazardProblem",
     theta_init: np.ndarray | None = None,
     maxiter: int = 1000,
-    ftol: float = 1e-8,
+    ftol: float = 1e-12,
     clip_ratio: float = 1e6,
     reparametrize_pecking_order: list[str] = [None, "softplus", "log"],
 ) -> tuple[DualMaximizerResults, np.ndarray]:
@@ -362,8 +403,9 @@ def _maximize_lagrange_dual_with_fallback(
         problem: The MoralHazardProblem instance.
         theta_init: Initial guess for multipliers. If None, uses zeros.
         maxiter: Maximum optimizer iterations. Defaults to 1000.
-        ftol: Function tolerance for convergence. Defaults to 1e-8.
-        clip_ratio: Ratio clipping for numerical stability. Defaults to 1e6.
+        ftol: Function tolerance for convergence. Defaults to 1e-12.
+        clip_ratio: Deprecated compatibility argument; likelihood ratios are
+            no longer clipped.
         reparametrize_pecking_order: List of reparametrization methods to
             try in order. Defaults to [None, "softplus", "log"].
 
@@ -377,35 +419,24 @@ def _maximize_lagrange_dual_with_fallback(
     last_reparametrize = None
     
     for reparametrize in reparametrize_pecking_order:
-        try:
-            return _maximize_lagrange_dual(
-                a0=a0,
-                Ubar=Ubar,
-                a_hat=a_hat,
-                problem=problem,
-                theta_init=theta_init,
-                maxiter=maxiter,
-                ftol=ftol,
-                clip_ratio=clip_ratio,
-                reparametrize=reparametrize,
-                raise_on_failure=True,
-            )
-        except RuntimeError:
-            # Get results from failed solver for debugging (without raising)
-            last_result, last_theta = _maximize_lagrange_dual(
-                a0=a0,
-                Ubar=Ubar,
-                a_hat=a_hat,
-                problem=problem,
-                theta_init=theta_init,
-                maxiter=maxiter,
-                ftol=ftol,
-                clip_ratio=clip_ratio,
-                reparametrize=reparametrize,
-                raise_on_failure=False,
-            )
-            last_reparametrize = reparametrize
-            continue
+        # Run each parametrization once.  The old exception path reran every
+        # failed optimization solely to recover diagnostics, doubling its cost.
+        result, theta = _maximize_lagrange_dual(
+            a0=a0,
+            Ubar=Ubar,
+            a_hat=a_hat,
+            problem=problem,
+            theta_init=theta_init,
+            maxiter=maxiter,
+            ftol=ftol,
+            clip_ratio=clip_ratio,
+            reparametrize=reparametrize,
+            raise_on_failure=False,
+        )
+        last_result, last_theta = result, theta
+        last_reparametrize = reparametrize
+        if result.solver_state["success"]:
+            return result, theta
     
     # All solvers failed - warn and return last result for debugging
     warnings.warn(
@@ -446,7 +477,8 @@ def _minimize_cost_internal(
         n_a_iterations: Maximum iterations for adding IC constraints.
             Set to 0 to solve only the relaxed problem. Defaults to 10.
         theta_init: Initial guess for multipliers. If None, uses zeros.
-        clip_ratio: Ratio clipping for numerical stability. Defaults to 1e6.
+        clip_ratio: Deprecated compatibility argument; likelihood ratios are
+            no longer clipped.
         a_ic_lb: Lower bound for IC violation search. Defaults to 0.
         a_ic_ub: Upper bound for IC violation search. Defaults to inf.
         a_always_check_global_ic: Actions to always include in IC check
@@ -464,6 +496,7 @@ def _minimize_cost_internal(
     best_action_trace: list[float] = []
     foa_flag = None if n_a_iterations == 0 else True
     cvxpy_fallback = False
+    outer_converged = None if n_a_iterations == 0 else False
     
     # Solve relaxed problem
     a_hat = np.array([], dtype=np.float64)
@@ -509,7 +542,7 @@ def _minimize_cost_internal(
         best_action_distance_trace.append(best_action_distance)
         best_action_trace.append(a_best)
 
-        global_ic_tolerance = 1e-3
+        global_ic_tolerance = 1e-5
         best_action_distance_tolerance = 1e-3
 
         if global_ic_violation > global_ic_tolerance and best_action_distance > best_action_distance_tolerance:
@@ -522,7 +555,9 @@ def _minimize_cost_internal(
             # 1. Solver failed (success=False) or
             # 2. Best action is repeated (already in a_hat, so we wouldn't grow)
             solver_failed = not results_dual.solver_state.get('success', True)
-            best_action_repeated = a_best in a_hat
+            best_action_repeated = bool(
+                np.any(np.isclose(a_hat, a_best, rtol=0.0, atol=1e-7))
+            )
             
             if (solver_failed or best_action_repeated) and (cvxpy_fallback is False):
                 # CVXPY fallback: find binding constraints using CVXPY
@@ -553,14 +588,14 @@ def _minimize_cost_internal(
                         )
                         # Add binding actions to a_hat
                         for a_bind in binding_actions:
-                            if a_bind not in a_hat:
+                            if not np.any(np.isclose(a_hat, a_bind, rtol=0.0, atol=1e-7)):
                                 a_hat = np.concatenate([a_hat, np.array([a_bind])])
                     else:
                         warnings.warn(
                             f"CVXPY found no binding IC constraints. Adding a_best={a_best} anyway.",
                             RuntimeWarning
                         )
-                        if a_best not in a_hat:
+                        if not np.any(np.isclose(a_hat, a_best, rtol=0.0, atol=1e-7)):
                             a_hat = np.concatenate([a_hat, np.array([a_best])])
                             
                 except Exception as e:
@@ -568,11 +603,12 @@ def _minimize_cost_internal(
                         f"CVXPY fallback failed: {e}. Adding a_best={a_best} instead.",
                         RuntimeWarning
                     )
-                    if a_best not in a_hat:
+                    if not np.any(np.isclose(a_hat, a_best, rtol=0.0, atol=1e-7)):
                         a_hat = np.concatenate([a_hat, np.array([a_best])])
             else:
-                # Normal case: just add the best action
-                a_hat = np.concatenate([a_hat, np.array([a_best])])
+                # Normal case: add a genuinely new separating action only.
+                if not best_action_repeated:
+                    a_hat = np.concatenate([a_hat, np.array([a_best])])
             
             results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(
                 a0=intended_action,
@@ -587,16 +623,19 @@ def _minimize_cost_internal(
             a_hat_trace.append(a_hat.copy())
             multipliers_trace.append(results_dual.multipliers.copy())
         else:
+            outer_converged = True
             break
 
     # Build CostMinimizationResults
+    final_solver_state = dict(results_dual.solver_state)
+    final_solver_state["outer_converged"] = outer_converged
     cost_results = CostMinimizationResults(
         optimal_contract=results_dual.optimal_contract,
         expected_wage=results_dual.expected_wage,
         a_hat=a_hat,
         multipliers=results_dual.multipliers,
         constraints=results_dual.constraints,
-        solver_state=results_dual.solver_state,
+        solver_state=final_solver_state,
         n_outer_iterations=iterations,
         first_order_approach_holds=foa_flag,
         a_hat_trace=a_hat_trace,
