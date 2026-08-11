@@ -326,7 +326,10 @@ w
     _, objective_grad = _dual_value_and_grad(theta_opt, cache, problem, Ubar)
     projected_grad = objective_grad.copy()
     positive_indices = np.r_[0, np.arange(2, theta_opt.size)]
-    at_lower_bound = theta_opt[positive_indices] <= 1e-10
+    # Log/softplus parametrizations cannot represent an exact zero.  Treat
+    # numerically negligible multipliers as active at the lower bound when
+    # evaluating the KKT residual in the original coordinates.
+    at_lower_bound = theta_opt[positive_indices] <= 1e-8
     points_into_bound = objective_grad[positive_indices] >= 0
     projected_grad[positive_indices[at_lower_bound & points_into_bound]] = 0.0
     projected_grad_inf = float(np.max(np.abs(projected_grad), initial=0.0))
@@ -337,8 +340,7 @@ w
         float(np.max(np.abs(mu_hat_opt * cons["IC"]), initial=0.0)),
     )
     accepted = bool(
-        res.success
-        and np.isfinite(res.fun)
+        np.isfinite(res.fun)
         and projected_grad_inf <= 1e-4
         and primal_residual <= 1e-5
         and complementarity <= 1e-3
@@ -546,6 +548,14 @@ def _minimize_cost_internal(
         best_action_distance_tolerance = 1e-3
 
         if global_ic_violation > global_ic_tolerance and best_action_distance > best_action_distance_tolerance:
+            # Test repetition against constraints that were present in the
+            # master just solved.  On the first iteration, a_best often equals
+            # an action in a_always_check_global_ic; checking after adding that
+            # seed incorrectly triggered the expensive CVXPY fallback before
+            # the seeded master had ever been solved.
+            best_action_repeated = bool(
+                np.any(np.isclose(a_hat, a_best, rtol=0.0, atol=1e-7))
+            )
             if iterations == 0:
                 a_hat = a_always_check_global_ic.copy()
             foa_flag = False
@@ -553,11 +563,8 @@ def _minimize_cost_internal(
             
             # Check if we need CVXPY fallback:
             # 1. Solver failed (success=False) or
-            # 2. Best action is repeated (already in a_hat, so we wouldn't grow)
+            # 2. Best action is repeated in the master that was just solved.
             solver_failed = not results_dual.solver_state.get('success', True)
-            best_action_repeated = bool(
-                np.any(np.isclose(a_hat, a_best, rtol=0.0, atol=1e-7))
-            )
             
             if (solver_failed or best_action_repeated) and (cvxpy_fallback is False):
                 # CVXPY fallback: find binding constraints using CVXPY
@@ -607,7 +614,8 @@ def _minimize_cost_internal(
                         a_hat = np.concatenate([a_hat, np.array([a_best])])
             else:
                 # Normal case: add a genuinely new separating action only.
-                if not best_action_repeated:
+                # Recheck after first-iteration seed actions were inserted.
+                if not np.any(np.isclose(a_hat, a_best, rtol=0.0, atol=1e-7)):
                     a_hat = np.concatenate([a_hat, np.array([a_best])])
             
             results_dual, theta_optimal = _maximize_lagrange_dual_with_fallback(

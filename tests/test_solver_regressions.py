@@ -6,6 +6,7 @@ import warnings
 import numpy as np
 import pytest
 
+from moralhazard.config_maker import make_distribution_cfg, make_utility_cfg
 from moralhazard.core import _make_cache
 from moralhazard.problem import MoralHazardProblem
 from moralhazard.solver import _dual_value_and_grad
@@ -87,3 +88,47 @@ def test_fallback_cases_are_certified_without_fallback(
 
     # Preserve the pre-change, CVXPY-backed answer to the examples.
     assert result.expected_wage == pytest.approx(baseline_wage, abs=1e-3)
+
+
+def test_first_seed_action_does_not_trigger_fallback():
+    """A first deviation equal to an always-check seed must be solved normally."""
+    x0 = 50.0
+    theta = 1.0 / 100.0 / 150.0
+    utility = make_utility_cfg("log", w0=x0)
+    distribution = make_distribution_cfg("Student_t", sigma=20.0, nu=1.15)
+
+    def C(a): return theta * a**2 / 2
+    def Cprime(a): return theta * a
+
+    problem = MoralHazardProblem({
+        "problem_params": {
+            **utility, **distribution, "C": C, "Cprime": Cprime,
+        },
+        "computational_params": {
+            "distribution_type": "continuous", "y_min": -200.0,
+            "y_max": 380.0, "n": 201,
+        },
+    })
+    reservation_utility = float(utility["u"](-0.90909090909091))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = problem.solve_cost_minimization_problem(
+            intended_action=100.0,
+            reservation_utility=reservation_utility,
+            a_ic_lb=0.0,
+            a_ic_ub=100.0,
+            n_a_iterations=100,
+        )
+
+    assert np.isfinite(result.expected_wage)
+    assert result.solver_state["success"]
+    assert result.solver_state["outer_converged"]
+    assert not any("CVXPY fallback" in str(w.message) for w in caught)
+    assert len(result.a_hat) == len(np.unique(np.round(result.a_hat, 7)))
+
+    dense_actions = np.linspace(0.0, 100.0, 2001)
+    dense_utilities = problem.U(result.optimal_contract, dense_actions)
+    intended_utility = float(
+        np.asarray(problem.U(result.optimal_contract, 100.0)).item()
+    )
+    assert float(np.max(dense_utilities) - intended_utility) <= 1e-5
