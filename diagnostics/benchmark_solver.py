@@ -183,7 +183,10 @@ def run(actions: list[float], dense_points: int, iterations: int) -> tuple[dict,
         dense_index = int(np.argmax(dense_utility))
         messages = [str(item.message) for item in caught]
         fallback_messages = [m for m in messages if "Triggering CVXPY fallback" in m]
-        solver_failures = [m for m in messages if "Solver failed with" in m]
+        solver_failures = [
+            m for m in messages
+            if "Solver failed" in m or "All reparametrizations failed" in m
+        ]
         repeated = [m for m in fallback_messages if "repeated" in m]
 
         rows.append(
