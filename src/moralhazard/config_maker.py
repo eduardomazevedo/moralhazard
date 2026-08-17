@@ -136,9 +136,13 @@ def make_utility_cfg(
             if xp is np:
                 uval = _asarray(uval)
                 base = np.maximum((one_minus_g * uval), 0.0)
+            elif gamma > 1.0:
+                # A negative power is convex and decreasing, so wrapping its
+                # affine argument in maximum() violates CVXPY's DCP rules.
+                # The power atom enforces its own positive-base domain.
+                base = one_minus_g * uval
             else:
-                # CVXPY: use cp.maximum
-                base = xp.maximum((one_minus_g * uval), 0.0)
+                base = xp.maximum(one_minus_g * uval, 0.0)
             return xp.power(base, inv_power) - w0
 
         # link_function(z) = max(w0^γ, z)^{(1-γ)/γ}/(1-γ)
@@ -165,8 +169,9 @@ def make_utility_cfg(
                 # -α u must be > 0; clamp tiny to avoid NaNs
                 t = np.maximum(-alpha * uval, 1e-300)
             else:
-                # CVXPY: use cp.maximum
-                t = xp.maximum(-alpha * uval, 1e-300)
+                # The log atom enforces -αu > 0. A maximum() clamp would make
+                # its argument convex and the composition non-DCP.
+                t = -alpha * uval
             return -(1.0 / alpha) * xp.log(t) - w0
 
         # link_function(z) = - 1 / (α * max(exp(α w0), z))
