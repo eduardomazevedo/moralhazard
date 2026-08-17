@@ -135,7 +135,13 @@ def make_utility_cfg(
         def k(uval: ArrayLike, xp=np) -> ArrayLike:
             if xp is np:
                 uval = _asarray(uval)
-                base = np.maximum((one_minus_g * uval), 0.0)
+                base = one_minus_g * uval
+                # Utility is nonnegative for γ < 1 and strictly negative for
+                # γ > 1. Invalid inverse values represent infinite cost.
+                valid = base >= 0.0 if gamma < 1.0 else base > 0.0
+                consumption = np.full_like(base, np.inf, dtype=float)
+                np.power(base, inv_power, out=consumption, where=valid)
+                return consumption - w0
             elif gamma > 1.0:
                 # A negative power is convex and decreasing, so wrapping its
                 # affine argument in maximum() violates CVXPY's DCP rules.
@@ -166,13 +172,18 @@ def make_utility_cfg(
         def k(uval: ArrayLike, xp=np) -> ArrayLike:
             if xp is np:
                 uval = _asarray(uval)
-                # -α u must be > 0; clamp tiny to avoid NaNs
-                t = np.maximum(-alpha * uval, 1e-300)
+                t = -alpha * uval
+                valid = t > 0.0
+                log_t = np.zeros_like(t, dtype=float)
+                np.log(t, out=log_t, where=valid)
+                wage = np.full_like(t, np.inf, dtype=float)
+                np.copyto(wage, -(1.0 / alpha) * log_t - w0, where=valid)
+                return wage
             else:
                 # The log atom enforces -αu > 0. A maximum() clamp would make
                 # its argument convex and the composition non-DCP.
                 t = -alpha * uval
-            return -(1.0 / alpha) * xp.log(t) - w0
+                return -(1.0 / alpha) * xp.log(t) - w0
 
         # link_function(z) = - 1 / (α * max(exp(α w0), z))
         def link_function(z: ArrayLike) -> ArrayLike:
